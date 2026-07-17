@@ -31,6 +31,19 @@ from esphome.const import (
 
 from .. import template_ns
 
+ClimateAction = climate.climate_ns.enum("ClimateAction")
+CLIMATE_ACTIONS = {
+    "OFF": ClimateAction.CLIMATE_ACTION_OFF,
+    "COOLING": ClimateAction.CLIMATE_ACTION_COOLING,
+    "HEATING": ClimateAction.CLIMATE_ACTION_HEATING,
+    "IDLE": ClimateAction.CLIMATE_ACTION_IDLE,
+    "DRYING": ClimateAction.CLIMATE_ACTION_DRYING,
+    "FAN": ClimateAction.CLIMATE_ACTION_FAN,
+    "DEFROSTING": ClimateAction.CLIMATE_ACTION_DEFROSTING,
+}
+
+validate_climate_action = cv.enum(CLIMATE_ACTIONS, upper=True)
+
 CONF_CURRENT_HUMIDITY = "current_humidity"
 CONF_TARGET_HUMIDITY = "target_humidity"
 CONF_SUPPORTS_TWO_POINT_TARGET_TEMPERATURE = "supports_two_point_target_temperature"
@@ -219,7 +232,7 @@ CLIMATE_TEMPLATE_PUBLISH_ACTION_SCHEMA = cv.All(
             cv.Optional(CONF_TARGET_TEMPERATURE_HIGH): cv.templatable(cv.temperature),
             cv.Optional(CONF_TARGET_HUMIDITY): cv.templatable(cv.percentage_int),
             cv.Optional(CONF_MODE): cv.templatable(climate.validate_climate_mode),
-            cv.Optional(CONF_ACTION): cv.templatable(climate.validate_climate_action),
+            cv.Optional(CONF_ACTION): cv.templatable(validate_climate_action),
             cv.Exclusive(CONF_FAN_MODE, "fan_mode"): cv.templatable(
                 climate.validate_climate_fan_mode
             ),
@@ -283,7 +296,7 @@ async def climate_template_publish_to_code(config, action_id, template_arg, args
     if (v := config.get(CONF_MODE)) is not None:
         cg.add(var.set_mode(await cg.templatable(v, args, climate.ClimateMode)))
     if (v := config.get(CONF_ACTION)) is not None:
-        cg.add(var.set_action(await cg.templatable(v, args, climate.ClimateAction)))
+        cg.add(var.set_action(await cg.templatable(v, args, ClimateAction)))
     if (v := config.get(CONF_FAN_MODE)) is not None:
         cg.add(var.set_fan_mode(await cg.templatable(v, args, climate.ClimateFanMode)))
     if (v := config.get(CONF_CUSTOM_FAN_MODE)) is not None:
