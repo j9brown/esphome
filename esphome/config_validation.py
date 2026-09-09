@@ -50,6 +50,7 @@ from esphome.const import (
     CONF_REF,
     CONF_RETAIN,
     CONF_SECOND,
+    CONF_SETUP_CONDITION,
     CONF_SETUP_PRIORITY,
     CONF_STATE_TOPIC,
     CONF_SUBSCRIBE_QOS,
@@ -2452,6 +2453,9 @@ ENTITY_BASE_SCHEMA.add_extra(_entity_base_validator)
 
 COMPONENT_SCHEMA = Schema(
     {
+        # TODO: As a refinement, it would be better if this accepted an automation Condition
+        # (which could be a lambda) but the layering makes this difficult.
+        Optional(CONF_SETUP_CONDITION): returning_lambda,
         # ``setup_priority`` controls the relative order in which
         # components are brought up at boot. Wrong values can break
         # the boot sequence in subtle ways (e.g. an i2c device set

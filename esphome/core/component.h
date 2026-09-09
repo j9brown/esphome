@@ -77,13 +77,14 @@ void log_update_interval(const char *tag, PollingComponent *component);
 
 #define LOG_UPDATE_INTERVAL(this) log_update_interval(TAG, this)
 
-// Component state uses bits 0-2 (8 states, 5 used)
+// Component state uses bits 0-2 (8 states, 6 used)
 inline constexpr uint8_t COMPONENT_STATE_MASK = 0x07;
 inline constexpr uint8_t COMPONENT_STATE_CONSTRUCTION = 0x00;
 inline constexpr uint8_t COMPONENT_STATE_SETUP = 0x01;
 inline constexpr uint8_t COMPONENT_STATE_LOOP = 0x02;
 inline constexpr uint8_t COMPONENT_STATE_FAILED = 0x03;
 inline constexpr uint8_t COMPONENT_STATE_LOOP_DONE = 0x04;
+inline constexpr uint8_t COMPONENT_STATE_SETUP_CANCELLED = 0x05;
 // Status LED uses bits 3-4
 inline constexpr uint8_t STATUS_LED_MASK = 0x18;
 inline constexpr uint8_t STATUS_LED_OK = 0x00;
@@ -170,6 +171,7 @@ class Component {
 
   float get_actual_setup_priority() const;
 
+  void set_setup_condition(std::function<bool()> &&f);  // NOLINT
   void set_setup_priority(float priority);
 
   void call();
@@ -273,6 +275,16 @@ class Component {
 
   bool is_ready() const;
 
+  /** Check if this component is in the SETUP_CANCELLED state.
+   * This means the component setup condition evaluated to false so the component will not be setup,
+   * will not run its loop, and should not be used.
+   *
+   * @return True if the component setup was cancelled.
+   */
+  bool was_setup_cancelled() const {
+    return (this->component_state_ & COMPONENT_STATE_MASK) == COMPONENT_STATE_SETUP_CANCELLED;
+  }
+
   virtual bool can_proceed();
 
   bool status_has_warning() const { return this->component_state_ & STATUS_LED_WARNING; }
@@ -342,6 +354,7 @@ class Component {
 
   virtual void call_setup();
   void call_dump_config_();
+  bool call_setup_condition_();
 
   void enable_loop_slow_path_();
 
@@ -545,6 +558,10 @@ class PollingComponent : public Component {
 };
 
 // LoopBlockingGuard lives in application.h because it reads its state from App.
+
+// Function to clear setup conditions after all components are set up
+// Only has an implementation when USE_SETUP_CONDITION is defined
+void clear_setup_conditions();
 
 // Function to clear setup priority overrides after all components are set up
 // Only has an implementation when USE_SETUP_PRIORITY_OVERRIDE is defined

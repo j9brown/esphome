@@ -119,6 +119,11 @@ void Application::setup() {
   // Trim the scheduler freelist of its post-boot peak once startup churn settles.
   this->scheduler.set_timeout(this, SCHEDULER_FREELIST_TRIM_DELAY_MS, [this]() { this->scheduler.trim_freelist(); });
 
+#ifdef USE_SETUP_CONDITION
+  // Clear setup conditions to free memory
+  clear_setup_conditions();
+#endif
+
 #ifdef USE_SETUP_PRIORITY_OVERRIDE
   // Clear setup priority overrides to free memory
   clear_setup_priority_overrides();

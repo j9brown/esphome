@@ -4,6 +4,7 @@ import logging
 
 from esphome.const import (
     CONF_SAFE_MODE,
+    CONF_SETUP_CONDITION,
     CONF_SETUP_PRIORITY,
     CONF_TYPE_ID,
     CONF_UPDATE_INTERVAL,
@@ -12,13 +13,15 @@ from esphome.const import (
 from esphome.core import CORE, ID, CoroPriority, coroutine, coroutine_with_priority
 from esphome.coroutine import FakeAwaitable
 from esphome.cpp_generator import (
+    LambdaExpression,
     RawStatement,
     add,
     add_define,
     add_global,
     get_variable,
+    process_lambda,
 )
-from esphome.cpp_types import App
+from esphome.cpp_types import App, bool_
 from esphome.helpers import cpp_string_escape
 from esphome.types import ConfigFragmentType, ConfigType
 from esphome.util import Registry, RegistryEntry
@@ -213,6 +216,17 @@ async def gpio_pin_expression(conf):
     return await coroutine(pins.PIN_SCHEMA_REGISTRY[CORE.target_platform][0])(conf)
 
 
+def set_setup_condition(var, condition: LambdaExpression) -> None:
+    """Emit a setup-condition for the given component.
+
+    Pairs the ``set_setup_condition()`` call with the ``USE_SETUP_CONDITION``
+    define that compiles in the core condition support, so callers cannot emit one
+    without the other.
+    """
+    add_define("USE_SETUP_CONDITION")
+    add(var.set_setup_condition(condition))
+
+
 def set_setup_priority(var, priority: float) -> None:
     """Emit a setup-priority override for the given component.
 
@@ -240,6 +254,11 @@ async def register_component(var, config):
             f"Component ID {id_} was not declared to inherit from Component, or was registered twice. Please create a bug report with your configuration."
         )
     CORE.component_ids.remove(id_)
+    if CONF_SETUP_CONDITION in config:
+        condition_ = await process_lambda(
+            config[CONF_SETUP_CONDITION], [], return_type=bool_
+        )
+        set_setup_condition(var, condition_)
     if CONF_SETUP_PRIORITY in config:
         set_setup_priority(var, config[CONF_SETUP_PRIORITY])
     if CONF_UPDATE_INTERVAL in config:

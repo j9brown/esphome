@@ -35,6 +35,18 @@ struct ComponentErrorMessage {
   const LogString *message;
 };
 
+#ifdef USE_SETUP_CONDITION
+struct ComponentSetupCondition {
+  const Component *component;
+  std::function<bool()> condition;
+};
+
+// Setup conditions - freed after setup completes
+// Using raw pointer instead of unique_ptr to avoid global constructor/destructor overhead
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+std::vector<ComponentSetupCondition> *setup_conditions = nullptr;
+#endif
+
 #ifdef USE_SETUP_PRIORITY_OVERRIDE
 struct ComponentPriorityOverride {
   const Component *component;
@@ -129,6 +141,11 @@ bool Component::cancel_interval(InternalSchedulerID id) { return App.scheduler.c
 void Component::call_setup() { this->setup(); }
 void Component::call_dump_config_() {
   this->dump_config();
+#ifdef USE_SETUP_CONDITION
+  if (this->was_setup_cancelled()) {
+    ESP_LOGCONFIG(TAG, "  %s was not setup because of its setup condition", LOG_STR_ARG(this->get_component_log_str()));
+  }
+#endif
   if (this->is_failed()) {
     // Look up error message from global vector
     const LogString *error_msg = nullptr;
@@ -150,6 +167,13 @@ void Component::call() {
   switch (state) {
     case COMPONENT_STATE_CONSTRUCTION: {
       // State Construction: Call setup and set state to setup
+#ifdef USE_SETUP_CONDITION
+      if (!this->call_setup_condition_()) {
+        this->set_component_state_(COMPONENT_STATE_SETUP_CANCELLED);
+        ESP_LOGV(TAG, "Setup %s was cancelled by its setup condition", LOG_STR_ARG(this->get_component_log_str()));
+        break;
+      }
+#endif
       this->set_component_state_(COMPONENT_STATE_SETUP);
       ESP_LOGV(TAG, "Setup %s", LOG_STR_ARG(this->get_component_log_str()));
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
@@ -181,6 +205,8 @@ void Component::call() {
       // State failed: Do nothing
     case COMPONENT_STATE_LOOP_DONE:
       // State loop done: Do nothing, component has finished its work
+    case COMPONENT_STATE_SETUP_CANCELLED:
+      // State setup cancelled: Do nothing
     default:
       break;
   }
@@ -340,6 +366,39 @@ void log_update_interval(const char *tag, PollingComponent *component) {
     ESP_LOGCONFIG(tag, "  Update Interval: %" PRIu32 ".%03" PRIu32 "s", update_interval / 1000, update_interval % 1000);
   }
 }
+
+#ifdef USE_SETUP_CONDITION
+bool Component::call_setup_condition_() {
+  // Check if there's a condition in the global vector
+  if (setup_conditions) {
+    // Linear search is fine for small n (typically < 5 overrides)
+    for (const auto &entry : *setup_conditions) {
+      if (entry.component == this) {
+        return entry.condition();
+      }
+    }
+  }
+  return true;
+}
+void Component::set_setup_condition(std::function<bool()> &&f) {  // NOLINT
+  // Lazy allocate the vector if needed
+  if (!setup_conditions) {
+    setup_conditions = new std::vector<ComponentSetupCondition>();
+  }
+
+  // Check if this component already has a condition
+  for (auto &entry : *setup_conditions) {
+    if (entry.component == this) {
+      entry.condition = std::move(f);
+      return;
+    }
+  }
+
+  // Add new override
+  setup_conditions->emplace_back(ComponentSetupCondition{this, std::move(f)});
+}
+#endif
+
 float Component::get_actual_setup_priority() const {
 #ifdef USE_SETUP_PRIORITY_OVERRIDE
   // Check if there's an override in the global vector
@@ -419,6 +478,14 @@ void __attribute__((noinline, cold)) LoopBlockingGuard::warn_blocking(uint32_t b
   ESP_LOGW(TAG, "%s took a long time for an operation (%" PRIu32 " ms), max is %" PRIu32 " ms", LOG_STR_ARG(name),
            blocking_time, threshold_ms);
 }
+
+#ifdef USE_SETUP_CONDITION
+void clear_setup_conditions() {
+  // Free the setup condition map completely
+  delete setup_conditions;
+  setup_conditions = nullptr;
+}
+#endif
 
 #ifdef USE_SETUP_PRIORITY_OVERRIDE
 void clear_setup_priority_overrides() {
