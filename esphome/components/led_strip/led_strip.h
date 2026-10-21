@@ -4,16 +4,47 @@
 #include <cstdint>
 
 namespace esphome::led_strip {
+namespace renderer {
 
-/// Represents a LED pixel's RGB(W) intensity after all rendering operations have been applied including
-/// interpolation, scaling, color correction, and dithering.  Not to be confused with `esphome::Color`
-/// which represents a linear color from the source of the rendering.
-struct LedColor {
-  uint8_t r;
-  uint8_t g;
-  uint8_t b;
-  uint8_t w;
+/// This operation is used by the renderer to write pixel data into the frame buffer of an `LedStrip`.
+/// It defines a single method called `write_next_pixel` which accepts RGB or RGBW color channel values and
+/// advances the write offset by one pixel (much like an output iterator).
+///
+/// This header defines output operations for a few common representations.  Components can also define
+/// custom output operations to match other representations and optimize data transfer.  During code
+/// generation, the LED strip component registers the type name of the `OutputOp` subclass that the
+/// renderer should expect to receive from the component at runtime given how the component has been
+/// configured.
+///
+/// An efficient output operation should contain no branches.
+struct OutputOp {};
+
+struct LinearOutputOp : public OutputOp {
+  uint8_t *data;
 };
+
+template<size_t bytes_per_pixel, size_t r_offset, size_t g_offset, size_t b_offset>
+struct LinearOutputOpRGB : public LinearOutputOp {
+  inline void write_next_pixel(uint8_t r, uint8_t g, uint8_t b) {
+    this->data[r_offset] = r;
+    this->data[g_offset] = g;
+    this->data[b_offset] = b;
+    this->data += bytes_per_pixel;
+  }
+};
+
+template<size_t bytes_per_pixel, size_t r_offset, size_t g_offset, size_t b_offset, size_t w_offset>
+struct LinearOutputOpRGBW : public LinearOutputOp {
+  inline void write_next_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
+    this->data[r_offset] = r;
+    this->data[g_offset] = g;
+    this->data[b_offset] = b;
+    this->data[w_offset] = w;
+    this->data += bytes_per_pixel;
+  }
+};
+
+}  // namespace renderer
 
 /// Describes immutable characteristics of an LED strip.
 struct LedStripTraits {
@@ -51,24 +82,27 @@ class LedStrip {
   ///
   /// The renderer performs the following steps to generate each frame:
   ///
-  ///   1. Call `begin_frame()`, only proceed if it returns READY.
-  ///   2. Call `push_pixel()` exactly once for every pixel in the LED strip as described
-  ///      by `LedStripTraits::num_pixels` to populate the frame in progress.
-  ///   3. Call `present_frame()` to start transferring the frame in progress to the hardware.
+  ///   1. Call `begin_frame()` to acquire an output operation, only proceed if it returns READY.
+  ///   2. Call `write_next_pixel()` on the output operation exactly once for every pixel in the LED
+  ///      strip as specified by `LedStripTraits::num_pixels` to populate the frame in progress.
+  ///   3. Call `end_frame()` to release the output operation and start transferring the frame in
+  ///      progress to the hardware.
   ///
-  /// The LED strip can rely on these rendering invariants to optimize away unnecessary actions such as
-  /// bounds checking and buffer clearing.
-  virtual LedStripStatus begin_frame() = 0;
-
-  /// Called by the renderer to set the color of the next pixel in the LED strip for the frame in progress.
+  /// The implementation can rely on these rendering invariants to optimize away unnecessary actions such
+  /// as bounds checking and buffer clearing.
   ///
-  /// The renderer calls this function on the render thread so it must not block.
-  virtual void push_pixel(LedColor color) = 0;
+  /// The implementation of `begin_frame` should use the placement new operator to initialize an instance
+  /// of the `OutputOp` subclass of the type specified in the led strip traits during code generation
+  /// into the storage provided by the caller at `output_op`.
+  virtual LedStripStatus begin_frame(void *output_op) = 0;
 
   /// Called by the renderer to start transferring the frame in progress to the hardware.
   ///
+  /// The implementation should destroy the `output_op` object to complete its lifecycle (not needed
+  /// when the `OutputOp` subclass is a plain old data type).
+  ///
   /// This function is called on the render thread and it must not block.
-  virtual void present_frame() = 0;
+  virtual void end_frame(renderer::OutputOp *output_op) = 0;
 };
 
 }  // namespace esphome::led_strip

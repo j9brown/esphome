@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include "esphome/core/helpers.h"
 #include "led_strip.h"
@@ -24,7 +25,7 @@ using uq8_24_t = uint32_t;   // Q8.24
 using uq8_8_t = uint16_t;    // Q8.8
 
 struct InputOpFast {
-  inline uq24_8_t next_scaled_value(uq24_8_t scale) {
+  inline uq24_8_t read_next_scaled_value(uq24_8_t scale) {
     const uint8_t value = *(this->color_data++);
     return value * scale;
   }
@@ -33,7 +34,7 @@ struct InputOpFast {
 };
 
 struct InputOpLerp {
-  inline uq24_8_t next_scaled_value(uq24_8_t scale) {
+  inline uq24_8_t read_next_scaled_value(uq24_8_t scale) {
     const uint8_t value_a = *(this->color_data_a++);
     const uint8_t value_b = *(this->color_data_b++);
     const uq24_8_t value_lerp = ((value_a << 8) + (value_b - value_a) * this->alpha) & 0xffff;  // subtraction may wrap
@@ -105,40 +106,36 @@ struct DitherOpFast {
   uint8_t noise{0};
 };
 
-template<typename LutOp, typename DitherOp> struct OutputOp {
+template<typename LutOp, typename DitherOp> struct ChannelOp {
   inline uint8_t operator()(uq24_8_t value) const { return this->dither_op(this->lut_op(value)) >> 8; }
 
   LutOp lut_op;
   DitherOp dither_op;
 };
 
-template<typename OutputOp> struct RenderOpRGB {
-  template<typename InputOp>
-  inline void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
+template<typename ChannelOp> struct RenderOpRGB {
+  template<typename InputOp, typename OutputOp>
+  inline void render(OutputOp &output_op, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
     for (size_t i = 0; i < num_pixels; i++) {
-      led_strip->push_pixel(LedColor{
-          .r = this->output_op(input_op.next_scaled_value(scale)),
-          .g = this->output_op(input_op.next_scaled_value(scale)),
-          .b = this->output_op(input_op.next_scaled_value(scale)),
-      });
+      output_op.write_next_pixel(this->channel_op(input_op.read_next_scaled_value(scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(scale)));
     }
   }
 
-  OutputOp output_op;
+  ChannelOp channel_op;
 };
 
-template<typename OutputOp> struct RenderOpRGBCorrected {
-  template<typename InputOp>
-  inline void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
+template<typename ChannelOp> struct RenderOpRGBCorrected {
+  template<typename InputOp, typename OutputOp>
+  inline void render(OutputOp &output_op, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
     const uq24_8_t r_scale = (this->r_correction * scale) >> 8;
     const uq24_8_t g_scale = (this->g_correction * scale) >> 8;
     const uq24_8_t b_scale = (this->b_correction * scale) >> 8;
     for (size_t i = 0; i < num_pixels; i++) {
-      led_strip->push_pixel(LedColor{
-          .r = this->output_op(input_op.next_scaled_value(r_scale)),
-          .g = this->output_op(input_op.next_scaled_value(g_scale)),
-          .b = this->output_op(input_op.next_scaled_value(b_scale)),
-      });
+      output_op.write_next_pixel(this->channel_op(input_op.read_next_scaled_value(r_scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(g_scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(b_scale)));
     }
   }
 
@@ -147,39 +144,35 @@ template<typename OutputOp> struct RenderOpRGBCorrected {
   const uq8_8_t g_correction{0x100};
   const uq8_8_t b_correction{0x100};
 
-  OutputOp output_op;
+  ChannelOp channel_op;
 };
 
-template<typename OutputOp> struct RenderOpRGBW {
-  template<typename InputOp>
-  inline void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
+template<typename ChannelOp> struct RenderOpRGBW {
+  template<typename InputOp, typename OutputOp>
+  inline void render(OutputOp &output_op, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
     for (size_t i = 0; i < num_pixels; i++) {
-      led_strip->push_pixel(LedColor{
-          .r = this->output_op(input_op.next_scaled_value(scale)),
-          .g = this->output_op(input_op.next_scaled_value(scale)),
-          .b = this->output_op(input_op.next_scaled_value(scale)),
-          .w = this->output_op(input_op.next_scaled_value(scale)),
-      });
+      output_op.write_next_pixel(this->channel_op(input_op.read_next_scaled_value(scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(scale)));
     }
   }
 
-  OutputOp output_op;
+  ChannelOp channel_op;
 };
 
-template<typename OutputOp> struct RenderOpRGBWCorrected {
-  template<typename InputOp>
-  inline void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
+template<typename ChannelOp> struct RenderOpRGBWCorrected {
+  template<typename InputOp, typename OutputOp>
+  inline void render(OutputOp &output_op, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
     const uq24_8_t r_scale = (this->r_correction * scale) >> 8;
     const uq24_8_t g_scale = (this->g_correction * scale) >> 8;
     const uq24_8_t b_scale = (this->b_correction * scale) >> 8;
     const uq24_8_t w_scale = (this->w_correction * scale) >> 8;
     for (size_t i = 0; i < num_pixels; i++) {
-      led_strip->push_pixel(LedColor{
-          .r = this->output_op(input_op.next_scaled_value(r_scale)),
-          .g = this->output_op(input_op.next_scaled_value(g_scale)),
-          .b = this->output_op(input_op.next_scaled_value(b_scale)),
-          .w = this->output_op(input_op.next_scaled_value(w_scale)),
-      });
+      output_op.write_next_pixel(this->channel_op(input_op.read_next_scaled_value(r_scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(g_scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(b_scale)),
+                                 this->channel_op(input_op.read_next_scaled_value(w_scale)));
     }
   }
 
@@ -189,19 +182,29 @@ template<typename OutputOp> struct RenderOpRGBWCorrected {
   const uq8_8_t b_correction{0x100};
   const uq8_8_t w_correction{0x100};
 
-  OutputOp output_op;
+  ChannelOp channel_op;
 };
 
 template<typename InputOp> struct PipelineBase {
-  virtual void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) = 0;
+  virtual LedStripStatus render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) = 0;
 };
 
-template<typename InputOp, typename RenderOp> struct Pipeline final : public PipelineBase<InputOp> {
-  explicit Pipeline(RenderOp render_op) : render_op(render_op) {}
+template<typename InputOp, typename RenderOp, typename OutputOp> struct Pipeline final : public PipelineBase<InputOp> {
+  explicit Pipeline(RenderOp render_op) : render_op(std::move(render_op)) {}
 
-  void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) override {
-    this->render_op.render(led_strip, num_pixels, input_op, scale);
-    this->render_op.output_op.dither_op.advance_pattern();
+  LedStripStatus render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) override {
+    alignas(OutputOp) std::byte output_op_storage[sizeof(OutputOp)];
+
+    LedStripStatus status = led_strip->begin_frame(output_op_storage);
+    if (status == LedStripStatus::READY) {
+      auto &output_op = *std::launder(reinterpret_cast<OutputOp *>(output_op_storage));
+
+      this->render_op.render(output_op, num_pixels, input_op, scale);
+      this->render_op.channel_op.dither_op.advance_pattern();
+
+      led_strip->end_frame(&output_op);
+    }
+    return status;
   }
 
   RenderOp render_op;

@@ -21,6 +21,12 @@ I2SClocklessLedStrip2 = i2s_clockless_led_strip_ns.class_(
     cg.Component,
 )
 
+i2s_clockless_led_strip_renderer_ns = i2s_clockless_led_strip_ns.namespace("renderer")
+Channel = i2s_clockless_led_strip_renderer_ns.enum("Channel", is_class=True)
+I2SOutputOpRGB = i2s_clockless_led_strip_renderer_ns.struct("I2SOutputOpRGB")
+I2SOutputOpRGBW = i2s_clockless_led_strip_renderer_ns.struct("I2SOutputOpRGBW")
+
+
 # These variants define SOC_I2S_SUPPORTS_TDM
 I2S_TDM_PORTS = {
     esp32.VARIANT_ESP32C3: 1,
@@ -35,8 +41,10 @@ I2S_TDM_PORTS = {
 
 
 def _register_led_strip_traits(config: ConfigType):
-    traits = led_strip.LedStripTraits()
-    traits.has_w_channel = "W" in config[CONF_CHANNEL_COLORS]
+    channels = config[CONF_CHANNEL_COLORS]
+    output_op_type = I2SOutputOpRGBW if "W" in channels else I2SOutputOpRGB
+    output_op_type = output_op_type.template(*[getattr(Channel, x) for x in channels])
+    traits = led_strip.LedStripTraits(channels=channels, output_op_type=output_op_type)
     led_strip.register_led_strip_traits(config[CONF_ID], traits)
     return config
 
