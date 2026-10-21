@@ -4,8 +4,17 @@
 #include <cstdint>
 #include <utility>
 
+#include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
 #include "led_strip.h"
+
+#ifdef USE_LED_STRIP_CONTINUOUS_RENDERER
+#include "esp_timer.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#endif
 
 namespace esphome::led_strip::renderer {
 
@@ -46,13 +55,7 @@ struct InputOpLerp {
   const uq24_8_t alpha;
 };
 
-/// This look-up table transforms scaled linear RGB(W) intensities in the range of 0 to 255 to the non-linear
-/// domain of an LED color by applying a non-decreasing monotonic function such as exponential gamma or some
-/// other curve as appropriate for the hardware.
-///
-/// The 0th entry must be 0.
-/// The 255th entry must be no larger than 1.0 (0xff00 in binary representation).
-/// The 256th entry must equal the 255th entry to allow indexing one entry beyond the maximum value.
+// Refer to `_generate_lut` in the code generator for details on the contents.
 struct Lut {
   uq8_8_t entries[257];
 };
@@ -227,7 +230,10 @@ class Renderer {
   virtual bool setup();
 
   /// Called from the main loop to show new color data.
-  virtual LedStripStatus show(const uint8_t *color_data, uq24_8_t scale) = 0;
+  /// If `done` is true, the renderer should stop rendering new in-between frames (such as for
+  /// dithering or interpolation) after showing this one.
+  /// Returns status about the LED strip.
+  virtual LedStripStatus show(const uint8_t *color_data, uq24_8_t scale, bool done) = 0;
 
  protected:
   LedStrip *const led_strip_;
@@ -242,32 +248,67 @@ class ImmediateRenderer final : public Renderer {
   ImmediateRenderer(LedStrip *led_strip, PipelineBase<InputOpFast> *pipeline)
       : Renderer(led_strip), pipeline_(pipeline) {}
 
-  LedStripStatus show(const uint8_t *color_data, uq24_8_t scale) override;
+  LedStripStatus show(const uint8_t *color_data, uq24_8_t scale, bool done) override;
 
  protected:
   PipelineBase<InputOpFast> *const pipeline_;
 };
 
-/*
+#ifdef USE_LED_STRIP_CONTINUOUS_RENDERER
 /// Renders pixels continuously from a real-time task driven by a timer at a consistent frame rate.
 class ContinuousRenderer : public Renderer {
-  public:
-    ContinuousRenderer(LedStripLight* parent) : Renderer(parent) {}
+ public:
+  ContinuousRenderer(LedStrip *led_strip, unsigned frame_rate)
+      : Renderer(led_strip), frame_period_us_(1000000 / frame_rate) {}
 
-    void show_from_main_loop() override;
+  bool setup() override;
+
+  LedStripStatus show(const uint8_t *color_data, uq24_8_t scale, bool done) override;
+
+ protected:
+  static void on_task_(void *arg);
+  void do_task_();
+
+  static void on_timer_(void *arg);
+
+  virtual void copy_with_mutex_(const uint8_t *color_data, uq24_8_t scale) = 0;
+  virtual LedStripStatus render_with_mutex_() = 0;
+
+  const uint64_t frame_period_us_;
+
+  esp_timer_handle_t timer_handle_{};
+  SemaphoreHandle_t mutex_handle_{};
+  TaskHandle_t task_handle_{};
+
+  bool done_{};
+  bool timer_running_{};
+  bool render_error_{};
 };
 
-/// Implements dithering only.
 class OneBufferContinuousRenderer final : public ContinuousRenderer {
-  public:
-    OneBufferContinuousRenderer(LedStripLight* parent) : Renderer(parent) {}
+ public:
+  OneBufferContinuousRenderer(LedStrip *led_strip, unsigned frame_rate, PipelineBase<InputOpFast> *pipeline)
+      : ContinuousRenderer(led_strip, frame_rate), pipeline_(pipeline) {}
+
+  bool setup() override;
+
+ protected:
+  void copy_with_mutex_(const uint8_t *color_data, uq24_8_t scale) override;
+  LedStripStatus render_with_mutex_() override;
+
+  PipelineBase<InputOpFast> *const pipeline_;
+
+  uint8_t *color_data_{};
+  uq24_8_t scale_{};
 };
 
-/// Implements interpolation and dithering.
+/*
 class TwoBufferContinuousRenderer final : public ContinuousRenderer {
   public:
     TwoBufferContinuousRenderer(LedStripLight* parent) : Renderer(parent) {}
 };
 */
+
+#endif
 
 }  // namespace esphome::led_strip::renderer

@@ -40,7 +40,7 @@ I2S_TDM_PORTS = {
 }
 
 
-def _register_led_strip_traits(config: ConfigType):
+def _register_led_strip_traits(config: ConfigType) -> ConfigType:
     channels = config[CONF_CHANNEL_COLORS]
     output_op_type = I2SOutputOpRGBW if "W" in channels else I2SOutputOpRGB
     output_op_type = output_op_type.template(*[getattr(Channel, x) for x in channels])

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "esphome/components/light/transformers.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome::led_strip {
@@ -57,13 +59,33 @@ light::LightTraits LedStripLight::get_traits() {
   return traits;
 }
 
+std::unique_ptr<light::LightTransformer> LedStripLight::create_default_transition() {
+  // Override the AddressableLight's implementation to only animate the light values and apply them
+  // in update_state.  The AddressableLightTransformer pre-scales the color values in the frame
+  // buffer which doesn't work.
+  return make_unique<light::LightTransitionTransformer>();
+}
+
+void LedStripLight::update_state(light::LightState *state) {
+  // Override the AddressableLight's implementation to preserve full-scale values in the frame buffer
+  // because scaling will be applied by the renderer instead.  Also keeps the base class's color
+  // correction at its default (identity transformation) value.
+  if (!this->is_effect_active()) {
+    const auto &val = state->current_values;
+    this->all() = Color(light::to_uint8_scale(val.get_red()), light::to_uint8_scale(val.get_green()),
+                        light::to_uint8_scale(val.get_blue()), light::to_uint8_scale(val.get_white()));
+    this->schedule_show();
+  }
+}
+
 void LedStripLight::write_state(light::LightState *state) {
   if (this->is_failed())
     return;
 
-  const auto scale = std::clamp<renderer::uq24_8_t>(
-      state->current_values.get_brightness() * state->current_values.get_state() * 0x100, 0, 0x100);
-  LedStripStatus status = this->renderer_->show(this->color_data_, scale);
+  const auto &val = state->current_values;
+  const auto scale = std::clamp<renderer::uq24_8_t>(val.get_brightness() * val.get_state() * 0x100, 0, 0x100);
+  const bool done = !val.is_on();
+  LedStripStatus status = this->renderer_->show(this->color_data_, scale, done);
   switch (status) {
     case LedStripStatus::READY:
       this->mark_shown_();
@@ -83,10 +105,10 @@ void LedStripLight::clear_effect_data() { memset(this->effect_data_, 0, this->ef
 light::ESPColorView LedStripLight::get_view_internal(int32_t index) const {
   if (this->has_w_channel()) {
     uint8_t *led = this->color_data_ + index * 4;
-    return {led, led + 1, led + 2, led + 3, &this->effect_data_[index], &this->identity_correction_};
+    return {led, led + 1, led + 2, led + 3, &this->effect_data_[index], &this->correction_};
   }
   uint8_t *led = this->color_data_ + index * 3;
-  return {led, led + 1, led + 2, nullptr, &this->effect_data_[index], &this->identity_correction_};
+  return {led, led + 1, led + 2, nullptr, &this->effect_data_[index], &this->correction_};
 }
 
 }  // namespace esphome::led_strip
