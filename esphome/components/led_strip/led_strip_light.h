@@ -24,9 +24,7 @@ class LedStripLight final : public light::AddressableLight {
   void write_state(light::LightState *state) override;
 
  protected:
-#ifdef USE_LED_STRIP_W_CHANNEL
   inline bool has_w_channel() const { return this->renderer_->traits().has_w_channel; }
-#endif
   inline size_t num_pixels() const { return this->renderer_->traits().num_pixels; }
   inline size_t color_data_bytes() const { return this->renderer_->color_data_bytes(); }
   inline size_t effect_data_bytes() const { return this->num_pixels(); }

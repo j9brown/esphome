@@ -7,11 +7,7 @@ namespace esphome::led_strip::renderer {
 ESPHOME_LOG_TAG(TAG, "led_strip");
 
 constexpr size_t calc_color_data_bytes(const LedStripTraits &traits) {
-#ifdef USE_LED_STRIP_W_CHANNEL
-  if (traits.has_w_channel)
-    return traits.num_pixels * 4;
-#endif
-  return traits.num_pixels * 3;
+  return traits.num_pixels * (traits.has_w_channel ? 4 : 3);
 }
 
 Renderer::Renderer(LedStrip *led_strip)
