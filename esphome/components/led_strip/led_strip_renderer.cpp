@@ -20,13 +20,8 @@ void Renderer::dump_config() {}
 bool Renderer::setup() { return true; }
 
 LedStripStatus ImmediateRenderer::show(const uint8_t *color_data, uq24_8_t scale) {
-  LedStripStatus status = this->led_strip_->begin_frame();
-  if (status == LedStripStatus::READY) {
-    this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_pixels, InputOpFast{.color_data = color_data},
-                            scale);
-    this->led_strip_->present_frame();
-  }
-  return status;
+  return this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_pixels,
+                                 InputOpFast{.color_data = color_data}, scale);
 }
 
 }  // namespace esphome::led_strip::renderer
