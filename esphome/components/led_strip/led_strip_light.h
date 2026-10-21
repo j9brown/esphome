@@ -21,6 +21,9 @@ class LedStripLight final : public light::AddressableLight {
 
   int32_t size() const override { return this->num_pixels(); }
   void clear_effect_data() override;
+
+  std::unique_ptr<light::LightTransformer> create_default_transition() override;
+  void update_state(light::LightState *state) override;
   void write_state(light::LightState *state) override;
 
  protected:
@@ -37,10 +40,6 @@ class LedStripLight final : public light::AddressableLight {
 
   uint8_t *effect_data_{nullptr};
   uint8_t *color_data_{nullptr};
-
-  // This color correction does nothing and is only here to satisfy `ESPColorView`.
-  // The renderer performs the actual color correction itself.
-  const light::ESPColorCorrection identity_correction_{};
 };
 
 }  // namespace esphome::led_strip
