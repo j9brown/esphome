@@ -150,7 +150,6 @@ template<typename OutputOp> struct RenderOpRGBCorrected {
   OutputOp output_op;
 };
 
-#ifdef USE_LED_STRIP_W_CHANNEL
 template<typename OutputOp> struct RenderOpRGBW {
   template<typename InputOp>
   inline void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) const {
@@ -192,7 +191,6 @@ template<typename OutputOp> struct RenderOpRGBWCorrected {
 
   OutputOp output_op;
 };
-#endif
 
 template<typename InputOp> struct PipelineBase {
   virtual void render(LedStrip *led_strip, size_t num_pixels, InputOp input_op, uq24_8_t scale) = 0;

@@ -49,12 +49,10 @@ bool LedStripLight::allocate_buffers_() {
 
 light::LightTraits LedStripLight::get_traits() {
   auto traits = light::LightTraits();
-#ifdef USE_LED_STRIP_W_CHANNEL
   if (this->has_w_channel()) {
     traits.set_supported_color_modes({light::ColorMode::RGB_WHITE, light::ColorMode::WHITE});
     return traits;
   }
-#endif
   traits.set_supported_color_modes({light::ColorMode::RGB});
   return traits;
 }
@@ -83,12 +81,10 @@ void LedStripLight::write_state(light::LightState *state) {
 void LedStripLight::clear_effect_data() { memset(this->effect_data_, 0, this->effect_data_bytes()); }
 
 light::ESPColorView LedStripLight::get_view_internal(int32_t index) const {
-#ifdef USE_LED_STRIP_W_CHANNEL
   if (this->has_w_channel()) {
     uint8_t *led = this->color_data_ + index * 4;
     return {led, led + 1, led + 2, led + 3, &this->effect_data_[index], &this->identity_correction_};
   }
-#endif
   uint8_t *led = this->color_data_ + index * 3;
   return {led, led + 1, led + 2, nullptr, &this->effect_data_[index], &this->identity_correction_};
 }
