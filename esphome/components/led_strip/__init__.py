@@ -34,9 +34,19 @@ class LedStripTraits:
 
 
 @dataclass
+class LutParams:
+    gamma: float = 1.0  # must be greater than 0.0
+    min_output: int = 1  # must be between 0 and 255
+    max_output: int = 255  # must be between min_output and 255
+
+    def key(self) -> tuple[float, int, int]:
+        return (self.gamma, self.min_output, self.max_output)
+
+
+@dataclass
 class LedStripData:
     traits: dict[ID, LedStripTraits] = field(default_factory=dict)
-    luts: dict[float, cg.Expression] = field(default_factory=dict)
+    luts: dict[tuple[float, int, int], cg.Expression] = field(default_factory=dict)
 
 
 def _get_data() -> LedStripData:
@@ -54,34 +64,44 @@ def register_led_strip_traits(led_strip_id: ID, traits: LedStripTraits):
     data.traits[led_strip_id] = traits
 
 
-def _generate_lut(gamma_correct: float) -> list[HexInt]:
+def _generate_lut(params: LutParams) -> list[HexInt]:
     """Generate a 257-entry uq8_8_t color correction lookup table.
 
     This look-up table transforms scaled linear RGB(W) intensities in the range of 0 to 255 to the non-linear
     domain of an LED strip by applying a non-decreasing monotonic function such as exponential gamma or some
     other curve as appropriate for the hardware.
 
-    The 0th entry must be 0.
+    The 0th entry must be 0 and subsequent entries should be non-zero.
     The 255th entry must be no larger than 1.0 (0xff00 in binary representation).
     The 256th entry must equal the 255th entry to allow indexing one entry beyond the maximum value.
     """
-    if gamma_correct > 0:
-        table = [(i / 255.0) ** gamma_correct for i in range(256)]
-    else:
-        table = list(range(256))
+    if (
+        params.gamma <= 0.0
+        or params.min_output < 0
+        or params.max_output > 255
+        or params.max_output < params.min_output
+    ):
+        raise ValueError(f"Invalid LUT parameters: {params}")
+
+    table = [0]
+    table += [
+        max(((i / 255.0) ** params.gamma) * params.max_output, params.min_output)
+        for i in range(1, 256)
+    ]
     table += table[-1:]
-    return [HexInt(int(round(x * 0xFF00))) for x in table]
+    return [HexInt(int(round(x * 0x100))) for x in table]
 
 
-def _lut_initializer(gamma_correct: float) -> str:
+def _lut_initializer(params: LutParams) -> str:
     """C++ initializer for a led_strip::renderer::Lut."""
-    lut = ", ".join(f"0x{int(v):04X}" for v in _generate_lut(gamma_correct))
+    lut = ", ".join(f"0x{int(v):04X}" for v in _generate_lut(params))
     return f"{{{lut}}}"
 
 
-def get_or_create_lut(gamma_correct: float, lut_id: ID) -> cg.RawExpression:
+def get_or_create_lut(params: LutParams, lut_id: ID) -> cg.RawExpression:
     data = _get_data()
-    if (lut := data.luts.get(gamma_correct)) is not None:
+    params_key = params.key()
+    if (lut := data.luts.get(params_key)) is not None:
         return lut
 
     # lut_id is generated and resolved against every declared ID, so it can't collide with a
@@ -89,11 +109,11 @@ def get_or_create_lut(gamma_correct: float, lut_id: ID) -> cg.RawExpression:
     cg.add(
         cg.RawStatement(
             f"static constexpr led_strip::renderer::Lut {lut_id} PROGMEM = "
-            f"{_lut_initializer(gamma_correct)};"
+            f"{_lut_initializer(params)};"
         )
     )
     lut = cg.RawExpression(f"&{lut_id}")
-    data.luts[gamma_correct] = lut
+    data.luts[params_key] = lut
     return lut
 
 
