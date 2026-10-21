@@ -149,9 +149,7 @@ void I2SClocklessLedStrip2::setup() {
 led_strip::LedStripTraits I2SClocklessLedStrip2::get_traits() const {
   return led_strip::LedStripTraits{
       .num_pixels = this->num_leds_,
-#ifdef USE_LED_STRIP_W_CHANNEL
       .has_w_channel = this->channel_colors_.has_white(),
-#endif
   };
 }
 
@@ -177,13 +175,10 @@ void I2SClocklessLedStrip2::push_pixel(led_strip::LedColor color) {
   set_i2s_data(i2s_data + this->channel_colors_.r * 3, color.r);
   set_i2s_data(i2s_data + this->channel_colors_.g * 3, color.g);
   set_i2s_data(i2s_data + this->channel_colors_.b * 3, color.b);
-#ifdef USE_LED_STRIP_W_CHANNEL
   if (this->channel_colors_.w != light::ChannelColors::NO_WHITE) {
     set_i2s_data(i2s_data + this->channel_colors_.w * 3, color.w);
     this->i2s_data_sent_ += 12;
-  } else
-#endif
-  {
+  } else {
     this->i2s_data_sent_ += 9;
   }
 }

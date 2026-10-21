@@ -12,9 +12,7 @@ struct LedColor {
   uint8_t r;
   uint8_t g;
   uint8_t b;
-#ifdef USE_LED_STRIP_W_CHANNEL
   uint8_t w;
-#endif
 };
 
 /// Describes immutable characteristics of an LED strip.
@@ -25,9 +23,7 @@ struct LedStripTraits {
   size_t num_pixels;
 
   /// True if the LED strip uses the white color channel.
-#ifdef USE_LED_STRIP_W_CHANNEL
   bool has_w_channel;
-#endif
 
   /// The estimated time interval in microseconds between the moment when the renderer presents
   /// a new frame and the moment when the physical pixels begin to illuminate.

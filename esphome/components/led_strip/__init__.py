@@ -45,8 +45,6 @@ def get_led_strip_traits(led_strip_id: ID) -> LedStripTraits:
 def register_led_strip_traits(led_strip_id: ID, traits: LedStripTraits):
     data = _get_data()
     data.traits[led_strip_id] = traits
-    if traits.has_w_channel:
-        cg.add_define("USE_LED_STRIP_W_CHANNEL")
 
 
 def _generate_lut(gamma_correct: float) -> list[HexInt]:
