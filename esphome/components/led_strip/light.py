@@ -11,6 +11,7 @@ CODEOWNERS = ["@j9brown"]
 LedStripLight = led_strip_ns.class_("LedStripLight", light.AddressableLight)
 
 led_strip_renderer_ns = led_strip_ns.namespace("renderer")
+ChannelOp = led_strip_renderer_ns.struct("ChannelOp")
 DitherOpNone = led_strip_renderer_ns.struct("DitherOpNone")
 DitherOpFast = led_strip_renderer_ns.struct("DitherOpFast")
 ImmediateRenderer = led_strip_renderer_ns.class_("ImmediateRenderer")
@@ -23,7 +24,6 @@ LutOpLerp = led_strip_renderer_ns.struct("LutOpLerp")
 OneBufferContinuousRenderer = led_strip_renderer_ns.class_(
     "OneBufferContinuousRenderer"
 )
-OutputOp = led_strip_renderer_ns.struct("OutputOp")
 Pipeline = led_strip_renderer_ns.struct("Pipeline")
 Renderer = led_strip_renderer_ns.class_("Renderer")
 RenderOpRGB = led_strip_renderer_ns.struct("RenderOpRGB")
@@ -78,7 +78,7 @@ def _final_validate(config: ConfigType) -> None:
     led_strip_traits = get_led_strip_traits(led_strip_id)
 
     if (color_correct := config.get(CONF_COLOR_CORRECT)) is not None:
-        expected_num_channels = 4 if led_strip_traits.has_w_channel else 3
+        expected_num_channels = led_strip_traits.num_channels()
         actual_num_channels = len(color_correct)
         if actual_num_channels != expected_num_channels:
             raise cv.Invalid(
@@ -117,41 +117,43 @@ async def to_code(config: ConfigType) -> None:
         dither_op_type = DitherOpNone
         dither_op = cg.StructInitializer(dither_op_type)
 
-    output_op_type = OutputOp.template(lut_op_type, dither_op_type)
-    output_op = cg.StructInitializer(
-        output_op_type, ("lut_op", lut_op), ("dither_op", dither_op)
+    channel_op_type = ChannelOp.template(lut_op_type, dither_op_type)
+    channel_op = cg.StructInitializer(
+        channel_op_type, ("lut_op", lut_op), ("dither_op", dither_op)
     )
 
-    if led_strip_traits.has_w_channel:
+    if led_strip_traits.has_w_channel():
         if (color_correct := config.get(CONF_COLOR_CORRECT)) is not None:
-            render_op_type = RenderOpRGBWCorrected.template(output_op_type)
+            render_op_type = RenderOpRGBWCorrected.template(channel_op_type)
             render_op = cg.StructInitializer(
                 render_op_type,
                 ("r_correction", _correction(color_correct[0])),
                 ("g_correction", _correction(color_correct[1])),
                 ("b_correction", _correction(color_correct[2])),
                 ("w_correction", _correction(color_correct[3])),
-                ("output_op", output_op),
+                ("channel_op", channel_op),
             )
         else:
-            render_op_type = RenderOpRGBW.template(output_op_type)
-            render_op = cg.StructInitializer(render_op_type, ("output_op", output_op))
+            render_op_type = RenderOpRGBW.template(channel_op_type)
+            render_op = cg.StructInitializer(render_op_type, ("channel_op", channel_op))
     elif (color_correct := config.get(CONF_COLOR_CORRECT)) is not None:
-        render_op_type = RenderOpRGBCorrected.template(output_op_type)
+        render_op_type = RenderOpRGBCorrected.template(channel_op_type)
         render_op = cg.StructInitializer(
             render_op_type,
             ("r_correction", _correction(color_correct[0])),
             ("g_correction", _correction(color_correct[1])),
             ("b_correction", _correction(color_correct[2])),
-            ("output_op", output_op),
+            ("channel_op", channel_op),
         )
     else:
-        render_op_type = RenderOpRGB.template(output_op_type)
-        render_op = cg.StructInitializer(render_op_type, ("output_op", output_op))
+        render_op_type = RenderOpRGB.template(channel_op_type)
+        render_op = cg.StructInitializer(render_op_type, ("channel_op", channel_op))
+
+    output_op_type = led_strip_traits.output_op_type
 
     pipeline = cg.new_Pvariable(
         config[CONF_PIPELINE_ID],
-        cg.TemplateArguments(input_op_type, render_op_type),
+        cg.TemplateArguments(input_op_type, render_op_type, output_op_type),
         render_op,
     )
 

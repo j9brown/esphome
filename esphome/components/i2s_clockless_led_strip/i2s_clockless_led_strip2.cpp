@@ -153,37 +153,18 @@ led_strip::LedStripTraits I2SClocklessLedStrip2::get_traits() const {
   };
 }
 
-led_strip::LedStripStatus I2SClocklessLedStrip2::begin_frame() {
+led_strip::LedStripStatus I2SClocklessLedStrip2::begin_frame(void *output_op) {
   if (this->is_failed())
     return led_strip::LedStripStatus::ERROR;
 
   if (this->i2s_data_ready_.load(std::memory_order_acquire))
     return led_strip::LedStripStatus::BUSY;
 
-  this->i2s_data_sent_ = 0;
+  new (output_op) renderer::I2SOutputOp{.i2s_data = this->i2s_data_};
   return led_strip::LedStripStatus::READY;
 }
 
-inline void set_i2s_data(uint8_t *i2s_data, uint8_t color_byte) {
-  i2s_data[0] = 0b10010010 | ((color_byte & 0x80) >> 1) | ((color_byte & 0x40) >> 3) | ((color_byte & 0x20) >> 5);
-  i2s_data[1] = 0b01001001 | ((color_byte & 0x10) << 1) | ((color_byte & 0x08) >> 1);
-  i2s_data[2] = 0b00100100 | ((color_byte & 0x04) << 5) | ((color_byte & 0x02) << 3) | ((color_byte & 0x01) << 1);
-}
-
-void I2SClocklessLedStrip2::push_pixel(led_strip::LedColor color) {
-  uint8_t *i2s_data = this->i2s_data_ + this->i2s_data_sent_;
-  set_i2s_data(i2s_data + this->channel_colors_.r * 3, color.r);
-  set_i2s_data(i2s_data + this->channel_colors_.g * 3, color.g);
-  set_i2s_data(i2s_data + this->channel_colors_.b * 3, color.b);
-  if (this->channel_colors_.w != light::ChannelColors::NO_WHITE) {
-    set_i2s_data(i2s_data + this->channel_colors_.w * 3, color.w);
-    this->i2s_data_sent_ += 12;
-  } else {
-    this->i2s_data_sent_ += 9;
-  }
-}
-
-void I2SClocklessLedStrip2::present_frame() {
+void I2SClocklessLedStrip2::end_frame(led_strip::renderer::OutputOp *output_op) {
   this->i2s_data_sent_ = 0;
   this->i2s_data_ready_.store(true, std::memory_order_release);
 }

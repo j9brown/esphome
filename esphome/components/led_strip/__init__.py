@@ -23,7 +23,14 @@ LED_STRIP_SCHEMA = cv.Schema(
 
 @dataclass
 class LedStripTraits:
-    has_w_channel: bool = False
+    channels: str  # RGB, RGBW, WRGB, etc.
+    output_op_type: cg.MockObjClass  # subclass of OutputOp
+
+    def has_w_channel(self):
+        return "W" in self.channels
+
+    def num_channels(self):
+        return len(self.channels)
 
 
 @dataclass
