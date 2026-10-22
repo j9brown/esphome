@@ -23,12 +23,16 @@ LED_STRIP_SCHEMA = cv.Schema(
 
 @dataclass
 class LedStripTraits:
-    channels: str  # RGB, RGBW, WRGB, etc.
-    output_op_type: cg.MockObjClass  # subclass of OutputOp
+    channels: str  # "RGB", "RGBW", "WRGB", etc.
+    output_op_type: cg.MockObjClass  # a subclass of OutputOp
+    num_leds: int  # number of individually addressable pixels in the LED strip
+    max_frame_rate: float  # maximum frame rate considering the number of pixels and device capabilities
 
+    @property
     def has_w_channel(self):
         return "W" in self.channels
 
+    @property
     def num_channels(self):
         return len(self.channels)
 
