@@ -6,7 +6,7 @@ import esphome.codegen as cg
 from esphome.components import esp32, led_strip, light
 from esphome.components.const import CONF_CHANNEL_COLORS
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_NUM_LEDS, CONF_PIN
+from esphome.const import CONF_BUFFER_DURATION, CONF_ID, CONF_NUM_LEDS, CONF_PIN
 from esphome.core import CORE
 from esphome.types import ConfigType
 
@@ -27,8 +27,6 @@ Channel = i2s_clockless_led_strip_renderer_ns.enum("Channel", is_class=True)
 I2SOutputOpRGB = i2s_clockless_led_strip_renderer_ns.struct("I2SOutputOpRGB")
 I2SOutputOpRGBW = i2s_clockless_led_strip_renderer_ns.struct("I2SOutputOpRGBW")
 
-
-CONF_MAX_BUFFER_DURATION = "max_buffer_duration"
 
 # These variants define SOC_I2S_SUPPORTS_TDM
 I2S_TDM_PORTS = {
@@ -76,7 +74,8 @@ def _num_i2s_reset_samples() -> int:
 
 
 # Balance between larger buffers and lower latency.
-MIN_I2S_BUFFER_DURATION_US = 1000
+MIN_I2S_BUFFER_DURATION_US = 500
+DEFAULT_I2S_BUFFER_DURATION_US = 1000
 MAX_I2S_BUFFER_DURATION_US = 2500
 
 
@@ -85,23 +84,14 @@ MAX_I2S_BUFFER_DURATION_US = 2500
 # recycled approximately every 40 us (25000 Hz) which is way too fast.  The buffer duration also imposes an upper
 # bound on the maximum LED strip refresh rate.  Round down to a multiple of 3 for `dma_frame_num` as required by
 # the ESP-IDF programming guide when using 24-bit samples.
-def _num_i2s_buffer_samples(max_buffer_duration_us: float) -> int:
-    nominal_buffer_duration_us = min(
-        max(max_buffer_duration_us, MIN_I2S_BUFFER_DURATION_US),
-        MAX_I2S_BUFFER_DURATION_US,
-    )
+def _num_i2s_buffer_samples(buffer_duration_us: float) -> int:
     return int(
-        math.floor(_num_i2s_samples_from_duration_us(nominal_buffer_duration_us) / 3)
-        * 3
+        math.floor(_num_i2s_samples_from_duration_us(buffer_duration_us) / 3) * 3
     )
-
-
-# An arbitrary margin to avoid dropping frames at maximum frame rate due to DMA synchronization
-# and interrupt latency.
-FRAME_DURATION_MARGIN_US = 200
 
 
 # Estimate the minimum amount of time it will take to send a frame taking into account the size of the buffer.
+# Adds a somewhat arbitrary margin to improve confidence in the max frame rate derived from this value.
 def _min_frame_duration_us(
     num_leds: int, num_channels: int, buffer_samples: int
 ) -> float:
@@ -109,7 +99,15 @@ def _min_frame_duration_us(
     reset_samples = _num_i2s_reset_samples()
     num_samples = data_samples + reset_samples
     actual_samples = int(math.ceil(num_samples / buffer_samples) * buffer_samples)
-    return _num_i2s_samples_to_duration_us(actual_samples) + FRAME_DURATION_MARGIN_US
+    margin_samples = buffer_samples / 2
+    return _num_i2s_samples_to_duration_us(actual_samples + margin_samples)
+
+
+def _validate_buffer_duration(value):
+    buffer_duration_us = cv.positive_time_period_microseconds(value).total_microseconds
+    return cv.float_range(
+        min=MIN_I2S_BUFFER_DURATION_US, max=MAX_I2S_BUFFER_DURATION_US
+    )(buffer_duration_us)
 
 
 def _register_led_strip_traits(config: ConfigType) -> ConfigType:
@@ -120,9 +118,7 @@ def _register_led_strip_traits(config: ConfigType) -> ConfigType:
 
     num_leds = config[CONF_NUM_LEDS]
     num_channels = len(channels)
-    i2s_buffer_samples = _num_i2s_buffer_samples(
-        config[CONF_MAX_BUFFER_DURATION].total_microseconds
-    )
+    i2s_buffer_samples = _num_i2s_buffer_samples(config[CONF_BUFFER_DURATION])
     max_frame_rate = 1000000 / _min_frame_duration_us(
         num_leds, num_channels, i2s_buffer_samples
     )
@@ -149,8 +145,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_NUM_LEDS): cv.positive_not_null_int,
             cv.Required(CONF_CHANNEL_COLORS): light.validate_channel_colors,
             cv.Optional(
-                CONF_MAX_BUFFER_DURATION, default=f"{MAX_I2S_BUFFER_DURATION_US}us"
-            ): cv.positive_time_period_microseconds,
+                CONF_BUFFER_DURATION, default=f"{DEFAULT_I2S_BUFFER_DURATION_US}us"
+            ): _validate_buffer_duration,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _register_led_strip_traits,
@@ -191,9 +187,7 @@ async def to_code(config: ConfigType) -> None:
         _num_i2s_data_samples(num_leds, num_channels) * I2S_BYTES_PER_SAMPLE
     )
     i2s_reset_bytes = _num_i2s_reset_samples() * I2S_BYTES_PER_SAMPLE
-    i2s_buffer_samples = _num_i2s_buffer_samples(
-        config[CONF_MAX_BUFFER_DURATION].total_microseconds
-    )
+    i2s_buffer_samples = _num_i2s_buffer_samples(config[CONF_BUFFER_DURATION])
     i2s_buffer_duration_us = _num_i2s_samples_to_duration_us(i2s_buffer_samples)
 
     var = cg.new_Pvariable(

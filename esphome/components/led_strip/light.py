@@ -58,7 +58,7 @@ LUT_METHODS = {
 # Automatic frame rate range based on the perceptual limits of the human visual system.
 # Lower frame rates may yield more pronounced flickering artifacts.
 # Higher frame rates may waste resources for little benefit.
-MIN_AUTO_FRAME_RATE_HZ = 40
+MIN_AUTO_FRAME_RATE_HZ = 50
 MAX_AUTO_FRAME_RATE_HZ = 60
 
 
