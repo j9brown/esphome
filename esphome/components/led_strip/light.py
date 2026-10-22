@@ -1,3 +1,5 @@
+import logging
+
 import esphome.codegen as cg
 from esphome.components import esp32, light
 import esphome.config_validation as cv
@@ -6,8 +8,9 @@ from esphome.types import ConfigType
 
 from . import LedStrip, LutParams, get_led_strip_traits, get_or_create_lut, led_strip_ns
 
-CODEOWNERS = ["@j9brown"]
+_LOGGER = logging.getLogger(__name__)
 
+ColorScaleFloat = led_strip_ns.class_("ColorScaleFloat")
 LedStripLight = led_strip_ns.class_("LedStripLight", light.AddressableLight)
 
 led_strip_renderer_ns = led_strip_ns.namespace("renderer")
@@ -28,9 +31,7 @@ OneBufferContinuousRenderer = led_strip_renderer_ns.class_(
 Pipeline = led_strip_renderer_ns.struct("Pipeline")
 Renderer = led_strip_renderer_ns.class_("Renderer")
 RenderOpRGB = led_strip_renderer_ns.struct("RenderOpRGB")
-RenderOpRGBCorrected = led_strip_renderer_ns.struct("RenderOpRGBCorrected")
 RenderOpRGBW = led_strip_renderer_ns.struct("RenderOpRGBW")
-RenderOpRGBWCorrected = led_strip_renderer_ns.struct("RenderOpRGBWCorrected")
 TwoBufferContinuousRenderer = led_strip_renderer_ns.class_(
     "TwoBufferContinuousRenderer", ContinuousRenderer
 )
@@ -38,6 +39,7 @@ TwoBufferContinuousRenderer = led_strip_renderer_ns.class_(
 
 CONF_DITHER_BITS = "dither_bits"
 CONF_FRAME_RATE = "frame_rate"
+CONF_FRAME_STATS = "frame_stats"
 CONF_INTERPOLATION = "interpolation"
 CONF_LUT_ID = "lut_id"
 CONF_LUT_METHOD = "lut_method"
@@ -53,17 +55,27 @@ LUT_METHODS = {
     "lerp": LutOpLerp,
 }
 
+# Automatic frame rate range based on the perceptual limits of the human visual system.
+# Lower frame rates may yield more pronounced flickering artifacts.
+# Higher frame rates may waste resources for little benefit.
+MIN_AUTO_FRAME_RATE_HZ = 40
+MAX_AUTO_FRAME_RATE_HZ = 60
+
 
 def _validate_quality(config: ConfigType) -> ConfigType:
     if config[CONF_LUT_MAX_OUTPUT] < config[CONF_LUT_MIN_OUTPUT]:
         raise cv.Invalid("lux_max_output must be no less than lut_min_output")
 
-    need_frame_rate = config[CONF_DITHER_BITS] != 0 or config[CONF_INTERPOLATION]
-    if config.get(CONF_FRAME_RATE) is None:
-        if need_frame_rate:
-            raise cv.Invalid("Need frame rate when dither or interpolation is enabled")
-    elif not need_frame_rate:
-        raise cv.Invalid("Omit frame rate unless dither or interpolation is enabled")
+    if config[CONF_DITHER_BITS] == 0 and not config[CONF_INTERPOLATION]:
+        if config[CONF_FRAME_RATE] != "auto":
+            raise cv.Invalid(
+                "frame_rate only supported when dithering or interpolation is enabled; omit it or use 'auto'"
+            )
+        if config[CONF_FRAME_STATS] != "never":
+            raise cv.Invalid(
+                "frame_stats only supported when dithering or interpolation is enabled; omit it or use 'never'"
+            )
+
     return config
 
 
@@ -81,8 +93,11 @@ CONFIG_SCHEMA = light.ADDRESSABLE_LIGHT_SCHEMA.extend(
                         min=0, max=4
                     ),
                     cv.Optional(CONF_INTERPOLATION, default=False): cv.boolean,
-                    cv.Optional(CONF_FRAME_RATE): cv.All(
-                        cv.framerate, cv.int_range(1, 1000)
+                    cv.Optional(CONF_FRAME_RATE, default="auto"): cv.Any(
+                        "auto", cv.All(cv.framerate, cv.int_range(1, 1000))
+                    ),
+                    cv.Optional(CONF_FRAME_STATS, default="never"): cv.Any(
+                        "never", cv.positive_time_period_seconds
                     ),
                     cv.Optional(CONF_LUT_METHOD, default="fast"): cv.enum(
                         LUT_METHODS, lower=True
@@ -107,24 +122,22 @@ def _final_validate(config: ConfigType) -> None:
     led_strip_traits = get_led_strip_traits(led_strip_id)
 
     if (color_correct := config.get(CONF_COLOR_CORRECT)) is not None:
-        expected_num_channels = led_strip_traits.num_channels()
+        expected_num_channels = led_strip_traits.num_channels
         actual_num_channels = len(color_correct)
         if actual_num_channels != expected_num_channels:
             raise cv.Invalid(
                 f"Light color correction has {actual_num_channels} channels but should have {expected_num_channels} to match the associated LED Strip"
             )
+    else:
+        config[CONF_COLOR_CORRECT] = [1.0] * led_strip_traits.num_channels
 
 
 FINAL_VALIDATE_SCHEMA = _final_validate
 
 
-def _correction(scale: float) -> int:
-    return int(round(scale * 256))
-
-
 async def to_code(config: ConfigType) -> None:
     led_strip_id = config[CONF_LED_STRIP_ID]
-    led_strip = await cg.get_variable(led_strip_id)
+    led_strip_var = await cg.get_variable(led_strip_id)
     led_strip_traits = get_led_strip_traits(led_strip_id)
 
     quality_config = config[CONF_QUALITY]
@@ -141,56 +154,38 @@ async def to_code(config: ConfigType) -> None:
     if lut_params != LutParams():
         lut = get_or_create_lut(lut_params, config[CONF_LUT_ID])
         lut_op_type = quality_config[CONF_LUT_METHOD].enum_value
-        lut_op = cg.StructInitializer(lut_op_type, ("lut", lut))
+        lut_op_expr = cg.StructInitializer(lut_op_type, ("lut", lut))
     else:
         lut_op_type = LutOpNone
-        lut_op = cg.StructInitializer(lut_op_type)
+        lut_op_expr = cg.StructInitializer(lut_op_type)
 
     if (dither_bits := quality_config[CONF_DITHER_BITS]) > 0:
         dither_op_type = DitherOpFast
-        dither_op = cg.StructInitializer(dither_op_type, ("dither_bits", dither_bits))
-    else:
-        dither_op_type = DitherOpNone
-        dither_op = cg.StructInitializer(dither_op_type)
-
-    channel_op_type = ChannelOp.template(lut_op_type, dither_op_type)
-    channel_op = cg.StructInitializer(
-        channel_op_type, ("lut_op", lut_op), ("dither_op", dither_op)
-    )
-
-    if led_strip_traits.has_w_channel():
-        if (color_correct := config.get(CONF_COLOR_CORRECT)) is not None:
-            render_op_type = RenderOpRGBWCorrected.template(channel_op_type)
-            render_op = cg.StructInitializer(
-                render_op_type,
-                ("r_correction", _correction(color_correct[0])),
-                ("g_correction", _correction(color_correct[1])),
-                ("b_correction", _correction(color_correct[2])),
-                ("w_correction", _correction(color_correct[3])),
-                ("channel_op", channel_op),
-            )
-        else:
-            render_op_type = RenderOpRGBW.template(channel_op_type)
-            render_op = cg.StructInitializer(render_op_type, ("channel_op", channel_op))
-    elif (color_correct := config.get(CONF_COLOR_CORRECT)) is not None:
-        render_op_type = RenderOpRGBCorrected.template(channel_op_type)
-        render_op = cg.StructInitializer(
-            render_op_type,
-            ("r_correction", _correction(color_correct[0])),
-            ("g_correction", _correction(color_correct[1])),
-            ("b_correction", _correction(color_correct[2])),
-            ("channel_op", channel_op),
+        dither_op_expr = cg.StructInitializer(
+            dither_op_type, ("dither_bits", dither_bits)
         )
     else:
-        render_op_type = RenderOpRGB.template(channel_op_type)
-        render_op = cg.StructInitializer(render_op_type, ("channel_op", channel_op))
+        dither_op_type = DitherOpNone
+        dither_op_expr = cg.StructInitializer(dither_op_type)
+
+    channel_op_type = ChannelOp.template(lut_op_type, dither_op_type)
+    channel_op_expr = cg.StructInitializer(
+        channel_op_type, ("lut_op", lut_op_expr), ("dither_op", dither_op_expr)
+    )
+
+    render_op_type = (
+        RenderOpRGBW if led_strip_traits.has_w_channel else RenderOpRGB
+    ).template(channel_op_type)
+    render_op_expr = cg.StructInitializer(
+        render_op_type, ("channel_op", channel_op_expr)
+    )
 
     output_op_type = led_strip_traits.output_op_type
 
-    pipeline = cg.new_Pvariable(
+    pipeline_var = cg.new_Pvariable(
         config[CONF_PIPELINE_ID],
         cg.TemplateArguments(input_op_type, render_op_type, output_op_type),
-        render_op,
+        render_op_expr,
     )
 
     if input_op_type.base == InputOpLerp.base:
@@ -202,19 +197,54 @@ async def to_code(config: ConfigType) -> None:
 
     if renderer_type.inherits_from(ContinuousRenderer):
         cg.add_define("USE_LED_STRIP_CONTINUOUS_RENDERER")
-        esp32.include_builtin_idf_component("esp_timer")
         esp32.add_idf_sdkconfig_option(
             "CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD", True
         )
-        renderer_args = [quality_config[CONF_FRAME_RATE]]
+
+        frame_rate = quality_config[CONF_FRAME_RATE]
+        max_frame_rate = led_strip_traits.max_frame_rate
+        if frame_rate == "auto":
+            # Automatically choose a frame rate to prevent the appearance of flickering.
+            frame_rate_scale = 2**dither_bits
+            min_auto_frame_rate = MIN_AUTO_FRAME_RATE_HZ * frame_rate_scale
+            max_auto_frame_rate = MAX_AUTO_FRAME_RATE_HZ * frame_rate_scale
+            if max_auto_frame_rate <= max_frame_rate:
+                frame_rate = max_auto_frame_rate
+            elif min_auto_frame_rate <= max_frame_rate:
+                frame_rate = max_frame_rate
+            else:
+                # Choose the minimum auto frame rate even if it is larger than the maximum frame rate that the
+                # LED strip component reported.  This will let the user experience the issue and log a warning
+                # to help them fix it.
+                frame_rate = min_auto_frame_rate
+        if frame_rate > max_frame_rate:
+            _LOGGER.warning(
+                "LED strip '%s' can only support a maximum of %s fps but %s was requested; flickering may occur.\nNote: The maximum frame rate may depend on the LED strip's type, length, and buffer size.",
+                led_strip_id,
+                max_frame_rate,
+                frame_rate,
+            )
+        renderer_args = [frame_rate]
     else:
         renderer_args = []
 
-    renderer = cg.Pvariable(
-        config[CONF_RENDERER_ID], renderer_type.new(led_strip, *renderer_args, pipeline)
+    renderer_var = cg.Pvariable(
+        config[CONF_RENDERER_ID],
+        renderer_type.new(led_strip_var, *renderer_args, pipeline_var),
+        renderer_type,
     )
 
-    var = cg.new_Pvariable(config[CONF_OUTPUT_ID], renderer)
+    if (frame_stats := quality_config[CONF_FRAME_STATS]) != "never":
+        cg.add_define("USE_LED_STRIP_FRAME_STATS")
+        cg.add(
+            renderer_var.set_frame_stats_report_interval_us(
+                frame_stats.total_microseconds
+            )
+        )
+
+    color_scale_expr = cg.ArrayInitializer(*config[CONF_COLOR_CORRECT])
+
+    var = cg.new_Pvariable(config[CONF_OUTPUT_ID], renderer_var, color_scale_expr)
 
     filtered_light_config = {
         k: v

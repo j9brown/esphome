@@ -17,41 +17,6 @@ ESPHOME_LOG_TAG(TAG, "i2s_clockless_led_strip");
 constexpr const char *const ERROR_ALLOCATION = "Allocation error";
 constexpr const char *const ERROR_I2S = "I2S error";
 
-// These values are hardcoded for an LED strip at 800 kbps.
-//
-// Each bit of LED strip data gets expanded into 3 bits of I2S data, where a 0-bit expands into 100
-// (1/3 duty cycle) and a 1-bit expands into 110 (2/3 duty cycle.  Each byte of LED strip data becomes
-// one 24-bit I2S sample to be transmitted at a rate of 100000 samples per second in I2S TDM mode.
-constexpr uint32_t I2S_SAMPLE_RATE_HZ = 100000;
-constexpr size_t I2S_BYTES_PER_SAMPLE = 3;
-
-// Determine how many I2S samples are needed to feed the output for the specified duration and vice-versa.
-constexpr size_t num_i2s_samples_from_duration_us(uint32_t duration_us) {
-  return (duration_us * I2S_SAMPLE_RATE_HZ + 999999) / 1000000;
-}
-constexpr uint32_t num_i2s_samples_to_duration_us(size_t samples) { return samples * 1000000ull / I2S_SAMPLE_RATE_HZ; }
-
-// Determine the number of I2S samples to pad with zeros after the LED data to encode the LED strip reset signal.
-// Minimum 50 us for WS2811, 80 us for SK6812, 280 us for WS2812B-V5.
-constexpr uint32_t I2S_RESET_DURATION_US = 300;
-constexpr size_t I2S_RESET_SAMPLES = num_i2s_samples_from_duration_us(I2S_RESET_DURATION_US);
-constexpr size_t I2S_RESET_BYTES = I2S_RESET_SAMPLES * I2S_BYTES_PER_SAMPLE;
-
-// Determine the number of I2S samples per DMA buffer to ensure that the interrupt-driven I2S on_sent callback
-// doesn't run too frequently.  For example, if the buffers were sized to hold just 1 RGBW pixel then they would be
-// recycled approximately every 40 us (25000 Hz) which is way too fast.  The buffer duration also imposes an upper
-// bound on the maximum LED strip refresh rate.  Round up to a multiple of 3 for `dma_frame_num` as required by
-// the ESP-IDF programming guide when using 24-bit samples.
-constexpr uint32_t I2S_BUFFER_DURATION_US_IDEAL = 2500;
-constexpr size_t I2S_BUFFER_SAMPLES = (num_i2s_samples_from_duration_us(I2S_BUFFER_DURATION_US_IDEAL) + 2) / 3 * 3;
-constexpr uint32_t I2S_BUFFER_DURATION_US_ACTUAL = num_i2s_samples_to_duration_us(I2S_BUFFER_SAMPLES);
-
-I2SClocklessLedStrip2::I2SClocklessLedStrip2(uint8_t pin, uint16_t num_leds, light::ChannelColors channel_colors)
-    : i2s_data_bytes_(num_leds * channel_colors.bytes_per_led() * I2S_BYTES_PER_SAMPLE),
-      channel_colors_(channel_colors),
-      num_leds_(num_leds),
-      pin_(pin) {}
-
 void I2SClocklessLedStrip2::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "I2S Clockless LED Strip:\n"
@@ -61,9 +26,9 @@ void I2SClocklessLedStrip2::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "  Channel colors: %s\n"
                 "  Number of LEDs: %" PRIu16 "\n"
-                "  DMA buffer: %" PRIuPTR " samples (%" PRIu32 " us)",
-                this->channel_colors_.to_string(channel_colors), this->num_leds_, I2S_BUFFER_SAMPLES,
-                I2S_BUFFER_DURATION_US_ACTUAL);
+                "  DMA buffer: %" PRIu16 " samples (%" PRIu16 " us)",
+                this->channel_colors_.to_string(channel_colors), this->num_leds_, this->i2s_buffer_samples_,
+                this->i2s_buffer_duration_us_);
 }
 
 float I2SClocklessLedStrip2::get_setup_priority() const { return setup_priority::IO; }
@@ -81,7 +46,7 @@ void I2SClocklessLedStrip2::setup() {
       .id = I2S_NUM_AUTO,
       .role = I2S_ROLE_MASTER,
       .dma_desc_num = 2,
-      .dma_frame_num = I2S_BUFFER_SAMPLES,
+      .dma_frame_num = this->i2s_buffer_samples_,
       .auto_clear_after_cb = false,
       .auto_clear_before_cb = false,
       .allow_pd = false,
@@ -94,7 +59,7 @@ void I2SClocklessLedStrip2::setup() {
     i2s_tdm_config_t tdm_config = {
         .clk_cfg =
             {
-                .sample_rate_hz = I2S_SAMPLE_RATE_HZ,
+                .sample_rate_hz = this->i2s_sample_rate_hz_,
                 .clk_src = I2S_CLK_SRC_DEFAULT,
                 .mclk_multiple = I2S_MCLK_MULTIPLE_384,
             },
@@ -148,7 +113,7 @@ void I2SClocklessLedStrip2::setup() {
 
 led_strip::LedStripTraits I2SClocklessLedStrip2::get_traits() const {
   return led_strip::LedStripTraits{
-      .num_pixels = this->num_leds_,
+      .num_leds = this->num_leds_,
       .has_w_channel = this->channel_colors_.has_white(),
   };
 }
@@ -188,7 +153,7 @@ bool IRAM_ATTR HOT I2SClocklessLedStrip2::i2s_on_sent_callback(i2s_chan_handle_t
       dma_buf_filled = true;
     }
     self->i2s_data_sent_ += dma_buf_size;
-    if (self->i2s_data_sent_ >= self->i2s_data_bytes_ + I2S_RESET_BYTES) {
+    if (self->i2s_data_sent_ >= self->i2s_data_bytes_ + self->i2s_reset_bytes_) {
       self->i2s_data_ready_.store(false, std::memory_order_release);
     }
   }

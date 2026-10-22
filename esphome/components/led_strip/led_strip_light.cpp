@@ -13,10 +13,11 @@ ESPHOME_LOG_TAG(TAG, "led_strip");
 constexpr const char *const ERROR_ALLOCATION = "Allocation error";
 constexpr const char *const ERROR_RENDERER = "Renderer error";
 
-LedStripLight::LedStripLight(renderer::Renderer *renderer) : renderer_(renderer) {}
-
 void LedStripLight::dump_config() {
-  ESP_LOGCONFIG(TAG, "LED Strip Light:\n");
+  ESP_LOGCONFIG(TAG,
+                "LED Strip Light:\n"
+                "  Color scale: R %.1f, G %.1f, B %.1f, W %.1f",
+                this->color_scale_.r, this->color_scale_.g, this->color_scale_.b, this->color_scale_.w);
   this->renderer_->dump_config();
 }
 
@@ -78,14 +79,26 @@ void LedStripLight::update_state(light::LightState *state) {
   }
 }
 
+inline renderer::uq24_8_t to_renderer_scale(float scale) {
+  return std::clamp<renderer::uq24_8_t>(scale * 0x100, 0, 0x100);
+}
+
 void LedStripLight::write_state(light::LightState *state) {
   if (this->is_failed())
     return;
 
   const auto &val = state->current_values;
-  const auto scale = std::clamp<renderer::uq24_8_t>(val.get_brightness() * val.get_state() * 0x100, 0, 0x100);
+  const float w_brightness = val.get_brightness() * val.get_state();
+  const float rgb_brightess = val.get_color_brightness() * w_brightness;
+  const renderer::ColorScale color_scale = {
+      .r = to_renderer_scale(this->color_scale_.r * rgb_brightess),
+      .g = to_renderer_scale(this->color_scale_.g * rgb_brightess),
+      .b = to_renderer_scale(this->color_scale_.b * rgb_brightess),
+      .w = to_renderer_scale(this->color_scale_.w * w_brightness),
+  };
   const bool done = !val.is_on();
-  LedStripStatus status = this->renderer_->show(this->color_data_, scale, done);
+
+  LedStripStatus status = this->renderer_->show(this->color_data_, color_scale, done);
   switch (status) {
     case LedStripStatus::READY:
       this->mark_shown_();
