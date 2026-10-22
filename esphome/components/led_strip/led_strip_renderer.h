@@ -97,13 +97,14 @@ struct LutOpLerp {
 struct DitherOpNone {
   inline uq24_8_t operator()(uq24_8_t value) const { return value; }
 
-  inline void advance_pattern() {}
+  inline void next_pixel() {}
+  inline void next_frame() {}
 };
 
-struct DitherOpFast {
+template<bool temporal> struct DitherOpPattern {
   inline uq24_8_t operator()(uq24_8_t value) const { return value + this->noise; }
 
-  inline void advance_pattern() {
+  inline void next() {
     // Produces a bit reversal permutation of a given size as a dither noise pattern.
     // It has the nice pattern of spreading out terms with similar error.
     // - 0, 1
@@ -113,10 +114,28 @@ struct DitherOpFast {
     this->noise = reverse_bits(this->sequence);
   }
 
+  inline void next_pixel() {
+    if constexpr (!temporal) {
+      this->next();
+    }
+  }
+
+  inline void next_frame() {
+    if constexpr (temporal) {
+      this->next();
+    } else {
+      sequence = 0;
+      noise = 0;
+    }
+  }
+
   const uint8_t dither_bits;
   uint8_t sequence{0};
   uint8_t noise{0};
 };
+
+using DitherOpSpatial = DitherOpPattern<false>;
+using DitherOpTemporal = DitherOpPattern<true>;
 
 template<typename LutOp, typename DitherOp> struct ChannelOp {
   inline uint8_t operator()(uq24_8_t value) const { return this->dither_op(this->lut_op(value)) >> 8; }
@@ -127,12 +146,14 @@ template<typename LutOp, typename DitherOp> struct ChannelOp {
 
 template<typename ChannelOp> struct RenderOpRGB {
   template<typename InputOp, typename OutputOp>
-  inline void render(OutputOp &output_op, size_t num_leds, InputOp input_op, ColorScale color_scale) const {
+  inline void render(OutputOp &output_op, size_t num_leds, InputOp input_op, ColorScale color_scale) {
     for (size_t i = 0; i < num_leds; i++) {
       output_op.write_next_pixel(this->channel_op(input_op.read_next_scaled_value(color_scale.r)),
                                  this->channel_op(input_op.read_next_scaled_value(color_scale.g)),
                                  this->channel_op(input_op.read_next_scaled_value(color_scale.b)));
+      channel_op.dither_op.next_pixel();
     }
+    channel_op.dither_op.next_frame();
   }
 
   ChannelOp channel_op;
@@ -140,13 +161,15 @@ template<typename ChannelOp> struct RenderOpRGB {
 
 template<typename ChannelOp> struct RenderOpRGBW {
   template<typename InputOp, typename OutputOp>
-  inline void render(OutputOp &output_op, size_t num_leds, InputOp input_op, ColorScale color_scale) const {
+  inline void render(OutputOp &output_op, size_t num_leds, InputOp input_op, ColorScale color_scale) {
     for (size_t i = 0; i < num_leds; i++) {
       output_op.write_next_pixel(this->channel_op(input_op.read_next_scaled_value(color_scale.r)),
                                  this->channel_op(input_op.read_next_scaled_value(color_scale.g)),
                                  this->channel_op(input_op.read_next_scaled_value(color_scale.b)),
                                  this->channel_op(input_op.read_next_scaled_value(color_scale.w)));
+      channel_op.dither_op.next_pixel();
     }
+    channel_op.dither_op.next_frame();
   }
 
   ChannelOp channel_op;
@@ -165,10 +188,7 @@ template<typename InputOp, typename RenderOp, typename OutputOp> struct Pipeline
     LedStripStatus status = led_strip->begin_frame(output_op_storage);
     if (status == LedStripStatus::READY) {
       auto &output_op = *std::launder(reinterpret_cast<OutputOp *>(output_op_storage));
-
       this->render_op.render(output_op, num_leds, input_op, color_scale);
-      this->render_op.channel_op.dither_op.advance_pattern();
-
       led_strip->end_frame(&output_op);
     }
     return status;
