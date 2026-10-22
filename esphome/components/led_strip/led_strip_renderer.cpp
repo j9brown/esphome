@@ -1,5 +1,6 @@
 #include "led_strip_renderer.h"
 
+#include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
@@ -7,14 +8,14 @@ namespace esphome::led_strip::renderer {
 
 ESPHOME_LOG_TAG(TAG, "led_strip");
 
-#ifdef USE_ESP32
-constexpr const char TASK_NAME[] = "led_strip_renderer";
+#ifdef USE_LED_STRIP_CONTINUOUS_RENDERER
+constexpr const char TASK_NAME[] = "led_strip";
 constexpr size_t TASK_STACK_SIZE = 4096;
 constexpr ssize_t TASK_PRIORITY = 10;
 #endif
 
 constexpr size_t calc_color_data_bytes(const LedStripTraits &traits) {
-  return traits.num_pixels * (traits.has_w_channel ? 4 : 3);
+  return traits.num_leds * (traits.has_w_channel ? 4 : 3);
 }
 
 Renderer::Renderer(LedStrip *led_strip)
@@ -26,9 +27,14 @@ void Renderer::dump_config() {}
 
 bool Renderer::setup() { return true; }
 
-LedStripStatus ImmediateRenderer::show(const uint8_t *color_data, uq24_8_t scale, bool done) {
-  return this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_pixels,
-                                 InputOpFast{.color_data = color_data}, scale);
+void ImmediateRenderer::dump_config() {
+  this->Renderer::dump_config();
+  ESP_LOGCONFIG(TAG, "  Renderer: Immediate");
+}
+
+LedStripStatus ImmediateRenderer::show(const uint8_t *color_data, ColorScale color_scale, bool done) {
+  return this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_leds,
+                                 InputOpFast{.color_data = color_data}, color_scale);
 }
 
 #ifdef USE_LED_STRIP_CONTINUOUS_RENDERER
@@ -58,24 +64,32 @@ bool ContinuousRenderer::setup() {
   return false;
 }
 
-LedStripStatus ContinuousRenderer::show(const uint8_t *color_data, uq24_8_t scale, bool done) {
+void ContinuousRenderer::dump_config() {
+  this->Renderer::dump_config();
+  ESP_LOGCONFIG(TAG, "  Renderer: Continuous\n  Frame rate: %.1f Hz", 1000000.f / this->frame_period_us_);
+}
+
+LedStripStatus ContinuousRenderer::show(const uint8_t *color_data, ColorScale color_scale, bool done) {
   xSemaphoreTake(this->mutex_handle_, portMAX_DELAY);
 
   const bool render_error = this->render_error_;
   bool notify = false;
   if (!render_error) {
     this->done_ = done;
-    this->copy_with_mutex_(color_data, scale);
+    this->copy_with_mutex_(color_data, color_scale);
     if (!this->timer_running_) {
-      esp_timer_start_periodic(this->timer_handle_, this->frame_period_us_);
       this->timer_running_ = true;
+#ifdef USE_LED_STRIP_FRAME_STATS
+      this->frame_stats_report_starting_ = true;
+#endif
+      esp_timer_start_periodic(this->timer_handle_, this->frame_period_us_);
       notify = true;
     }
   }
 
   xSemaphoreGive(this->mutex_handle_);
   if (notify)
-    xTaskNotify(this->task_handle_, 0, eNoAction);
+    xTaskNotify(this->task_handle_, 0, eIncrement);
   return render_error ? LedStripStatus::ERROR : LedStripStatus::READY;
 }
 
@@ -86,25 +100,79 @@ void ContinuousRenderer::on_task_(void *arg) {
 
 void ContinuousRenderer::do_task_() {
   for (;;) {
-    xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+    uint32_t notify_count;
+    xTaskNotifyWait(0, UINT32_MAX, &notify_count, portMAX_DELAY);
     xSemaphoreTake(this->mutex_handle_, portMAX_DELAY);
 
-    if (this->render_with_mutex_() == LedStripStatus::ERROR)
-      this->render_error_ = true;
+#ifdef USE_LED_STRIP_FRAME_STATS
+    this->frame_stats_.lost_count += notify_count - 1;
+    const uint32_t start_us = micros();
+#endif
+
+    LedStripStatus status = this->render_with_mutex_();
+    switch (status) {
+#ifdef USE_LED_STRIP_FRAME_STATS
+      case LedStripStatus::READY: {
+        const uint32_t frame_duration_us = micros() - start_us;
+        if (frame_duration_us < this->frame_stats_.fastest_us)
+          this->frame_stats_.fastest_us = frame_duration_us;
+        if (frame_duration_us > this->frame_stats_.slowest_us)
+          this->frame_stats_.slowest_us = frame_duration_us;
+        this->frame_stats_.frame_count += 1;
+        break;
+      }
+      case LedStripStatus::BUSY:
+        this->frame_stats_.busy_count += 1;
+        break;
+#endif
+      case LedStripStatus::ERROR:
+        this->render_error_ = true;
+        break;
+      default:
+        break;
+    }
+
+#ifdef USE_LED_STRIP_FRAME_STATS
+    bool force_report = this->frame_stats_report_starting_;
+    if (force_report) {
+      this->frame_stats_report_starting_ = false;
+      this->frame_stats_.report_start_us = start_us;
+    }
+#endif
 
     if (this->timer_running_ && (this->render_error_ || this->done_)) {
       esp_timer_stop(this->timer_handle_);
       this->timer_running_ = false;
+#ifdef USE_LED_STRIP_FRAME_STATS
+      force_report = true;
+#endif
     }
 
     xSemaphoreGive(this->mutex_handle_);
+
+#ifdef USE_LED_STRIP_FRAME_STATS
+    const uint32_t report_interval_us = this->frame_stats_report_interval_us_;
+    if (report_interval_us != 0) {
+      const uint32_t report_duration_us = start_us - this->frame_stats_.report_start_us;
+      if (force_report || report_duration_us + this->frame_period_us_ >= report_interval_us) {
+        const float fps =
+            (report_duration_us != 0 ? float(this->frame_stats_.frame_count * 1000000) / report_duration_us : 0);
+        ESP_LOGI(TAG,
+                 "Frame stats: %.1f fps, %" PRIu16 " frames in %" PRIu32 " us, slowest %" PRIu32 " us, fastest %" PRIu32
+                 " us, %" PRIu16 " busy, %" PRIu16 " lost",
+                 fps, this->frame_stats_.frame_count, report_duration_us, this->frame_stats_.slowest_us,
+                 this->frame_stats_.fastest_us, this->frame_stats_.busy_count, this->frame_stats_.lost_count);
+        this->frame_stats_ = {.report_start_us = start_us};
+      }
+    }
+#endif
   }
 }
 
 void ContinuousRenderer::on_timer_(void *arg) {
   auto self = static_cast<ContinuousRenderer *>(arg);
   BaseType_t higher_priority_task_woken{};
-  xTaskNotifyFromISR(self->task_handle_, 0, eNoAction, &higher_priority_task_woken);
+  xTaskNotifyFromISR(self->task_handle_, 0, eIncrement, &higher_priority_task_woken);
   if (higher_priority_task_woken)
     esp_timer_isr_dispatch_need_yield();
 }
@@ -117,14 +185,14 @@ bool OneBufferContinuousRenderer::setup() {
   return ContinuousRenderer::setup();
 }
 
-void OneBufferContinuousRenderer::copy_with_mutex_(const uint8_t *color_data, uq24_8_t scale) {
+void OneBufferContinuousRenderer::copy_with_mutex_(const uint8_t *color_data, ColorScale color_scale) {
   memcpy(this->color_data_, color_data, this->color_data_bytes());
-  this->scale_ = scale;
+  this->color_scale_ = color_scale;
 }
 
 LedStripStatus OneBufferContinuousRenderer::render_with_mutex_() {
-  return this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_pixels,
-                                 InputOpFast{.color_data = this->color_data_}, this->scale_);
+  return this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_leds,
+                                 InputOpFast{.color_data = this->color_data_}, this->color_scale_);
 }
 
 #endif  // USE_LED_STRIP_CONTINUOUS_RENDERER

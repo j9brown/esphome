@@ -60,7 +60,17 @@ template<Channel c0, Channel c1, Channel c2, Channel c3> struct I2SOutputOpRGBW 
 
 class I2SClocklessLedStrip2 final : public esphome::Component, public led_strip::LedStrip {
  public:
-  I2SClocklessLedStrip2(uint8_t pin, uint16_t num_leds, light::ChannelColors channel_colors);
+  I2SClocklessLedStrip2(uint8_t pin, uint16_t num_leds, light::ChannelColors channel_colors,
+                        uint32_t i2s_sample_rate_hz, size_t i2s_data_bytes, uint16_t i2s_reset_bytes,
+                        uint16_t i2s_buffer_samples, uint16_t i2s_buffer_duration_us)
+      : i2s_sample_rate_hz_(i2s_sample_rate_hz),
+        i2s_data_bytes_(i2s_data_bytes),
+        i2s_reset_bytes_(i2s_reset_bytes),
+        i2s_buffer_samples_(i2s_buffer_samples),
+        i2s_buffer_duration_us_(i2s_buffer_duration_us),
+        num_leds_(num_leds),
+        channel_colors_(channel_colors),
+        pin_(pin) {}
 
   void dump_config() override;
 
@@ -74,13 +84,18 @@ class I2SClocklessLedStrip2 final : public esphome::Component, public led_strip:
  protected:
   static bool i2s_on_sent_callback(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx);
 
+  const uint32_t i2s_sample_rate_hz_;
   const size_t i2s_data_bytes_;
+  const uint16_t i2s_reset_bytes_;
+  const uint16_t i2s_buffer_samples_;
+  const uint16_t i2s_buffer_duration_us_;
+  const uint16_t num_leds_;
+  const light::ChannelColors channel_colors_;
+  const uint8_t pin_;
+
   uint8_t *i2s_data_{nullptr};
   size_t i2s_data_sent_{0};
   i2s_chan_handle_t tx_handle_{};
-  const light::ChannelColors channel_colors_;
-  const uint16_t num_leds_;
-  const uint8_t pin_;
   std::atomic<bool> i2s_data_ready_{false};
 };
 

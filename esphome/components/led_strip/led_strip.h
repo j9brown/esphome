@@ -6,7 +6,7 @@
 namespace esphome::led_strip {
 namespace renderer {
 
-/// This operation is used by the renderer to write pixel data into the frame buffer of an `LedStrip`.
+/// The output operation is used by the renderer to write pixel data into the frame buffer of an `LedStrip`.
 /// It defines a single method called `write_next_pixel` which accepts RGB or RGBW color channel values and
 /// advances the write offset by one pixel (much like an output iterator).
 ///
@@ -51,7 +51,7 @@ struct LedStripTraits {
   /// The number of individually addressable logical pixels in the LED strip.
   /// In some LED strips, multiple adjacent LEDs may show the same color and thus they are effectively part
   /// of the same pixel so the number of logical pixels may differ from the number of physical LEDs.
-  size_t num_pixels;
+  size_t num_leds;
 
   /// True if the LED strip uses the white color channel.
   bool has_w_channel;
@@ -84,7 +84,7 @@ class LedStrip {
   ///
   ///   1. Call `begin_frame()` to acquire an output operation, only proceed if it returns READY.
   ///   2. Call `write_next_pixel()` on the output operation exactly once for every pixel in the LED
-  ///      strip as specified by `LedStripTraits::num_pixels` to populate the frame in progress.
+  ///      strip as specified by `LedStripTraits::num_leds` to populate the frame in progress.
   ///   3. Call `end_frame()` to release the output operation and start transferring the frame in
   ///      progress to the hardware.
   ///
