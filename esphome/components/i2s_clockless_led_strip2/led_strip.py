@@ -15,17 +15,17 @@ from . import DOMAIN
 CODEOWNERS = ["@j9brown"]
 DEPENDENCIES = ["esp32"]
 
-i2s_clockless_led_strip_ns = cg.esphome_ns.namespace("i2s_clockless_led_strip")
-I2SClocklessLedStrip2 = i2s_clockless_led_strip_ns.class_(
+i2s_clockless_led_strip2_ns = cg.esphome_ns.namespace("i2s_clockless_led_strip2")
+I2SClocklessLedStrip2 = i2s_clockless_led_strip2_ns.class_(
     "I2SClocklessLedStrip2",
     led_strip.LedStrip,
     cg.Component,
 )
 
-i2s_clockless_led_strip_renderer_ns = i2s_clockless_led_strip_ns.namespace("renderer")
-Channel = i2s_clockless_led_strip_renderer_ns.enum("Channel", is_class=True)
-I2SOutputOpRGB = i2s_clockless_led_strip_renderer_ns.struct("I2SOutputOpRGB")
-I2SOutputOpRGBW = i2s_clockless_led_strip_renderer_ns.struct("I2SOutputOpRGBW")
+i2s_clockless_led_strip2_renderer_ns = i2s_clockless_led_strip2_ns.namespace("renderer")
+Channel = i2s_clockless_led_strip2_renderer_ns.enum("Channel", is_class=True)
+I2SOutputOpRGB = i2s_clockless_led_strip2_renderer_ns.struct("I2SOutputOpRGB")
+I2SOutputOpRGBW = i2s_clockless_led_strip2_renderer_ns.struct("I2SOutputOpRGBW")
 
 
 # These variants define SOC_I2S_SUPPORTS_TDM
