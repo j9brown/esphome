@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "esphome/components/light/esp_color_view.h"
 #include "esphome/components/light/transformers.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
@@ -32,27 +33,30 @@ void LedStripLight::setup() {
     this->mark_failed(LOG_STR(ERROR_ALLOCATION));
     return;
   }
+  this->accessor_ =
+      new light::RawBufferColorAccessor(this->color_data_, this->effect_data_(),
+                                        light::ChannelColors{
+                                            .r = 0,
+                                            .g = 1,
+                                            .b = 2,
+                                            .w = this->has_w_channel_() ? uint8_t(3) : light::ChannelColors::NO_WHITE,
+                                        });
 }
 
 bool LedStripLight::allocate_buffers_() {
   RAMAllocator<uint8_t> allocator;
-  this->color_data_ = allocator.allocate(this->color_data_bytes());
+  const size_t total_size = this->color_data_bytes_() + this->effect_data_bytes_();
+  this->color_data_ = allocator.allocate(total_size);
   if (this->color_data_ != nullptr) {
-    this->effect_data_ = allocator.allocate(this->effect_data_bytes());
-    if (this->effect_data_ != nullptr) {
-      memset(this->color_data_, 0, this->color_data_bytes());
-      memset(this->effect_data_, 0, this->effect_data_bytes());
-      return true;
-    }
-    allocator.deallocate(this->color_data_, this->color_data_bytes());
-    this->color_data_ = nullptr;
+    memset(this->color_data_, 0, total_size);
+    return true;
   }
   return false;
 }
 
 light::LightTraits LedStripLight::get_traits() {
   auto traits = light::LightTraits();
-  if (this->has_w_channel()) {
+  if (this->has_w_channel_()) {
     traits.set_supported_color_modes({light::ColorMode::RGB_WHITE, light::ColorMode::WHITE});
     return traits;
   }
@@ -113,15 +117,6 @@ void LedStripLight::write_state(light::LightState *state) {
   }
 }
 
-void LedStripLight::clear_effect_data() { memset(this->effect_data_, 0, this->effect_data_bytes()); }
-
-light::ESPColorView LedStripLight::get_view_internal(int32_t index) const {
-  if (this->has_w_channel()) {
-    uint8_t *led = this->color_data_ + index * 4;
-    return {led, led + 1, led + 2, led + 3, &this->effect_data_[index], &this->correction_};
-  }
-  uint8_t *led = this->color_data_ + index * 3;
-  return {led, led + 1, led + 2, nullptr, &this->effect_data_[index], &this->correction_};
-}
+void LedStripLight::clear_effect_data() { memset(this->effect_data_(), 0, this->effect_data_bytes_()); }
 
 }  // namespace esphome::led_strip

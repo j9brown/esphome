@@ -10,9 +10,9 @@
 #include <driver/i2s_tdm.h>
 #include <esp_attr.h>
 
-namespace esphome::i2s_clockless_led_strip {
+namespace esphome::i2s_clockless_led_strip2 {
 
-ESPHOME_LOG_TAG(TAG, "i2s_clockless_led_strip");
+ESPHOME_LOG_TAG(TAG, "i2s_clockless_led_strip2");
 
 constexpr const char *const ERROR_ALLOCATION = "Allocation error";
 constexpr const char *const ERROR_I2S = "I2S error";
@@ -166,6 +166,6 @@ bool IRAM_ATTR HOT I2SClocklessLedStrip2::i2s_on_sent_callback(i2s_chan_handle_t
   return false;
 }
 
-}  // namespace esphome::i2s_clockless_led_strip
+}  // namespace esphome::i2s_clockless_led_strip2
 
 #endif

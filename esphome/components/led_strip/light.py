@@ -16,23 +16,20 @@ ColorScaleFloat = led_strip_ns.class_("ColorScaleFloat")
 LedStripLight = led_strip_ns.class_("LedStripLight", light.AddressableLight)
 
 
-def _forbid_unsupported_keys(config: ConfigType) -> ConfigType:
-    if CONF_GAMMA_CORRECT in config:
-        raise cv.Invalid("'gamma_correct' has moved to 'renderer.lut.gamma_correct'")
-    if light.CONF_POWER_ESTIMATION in config:
-        raise cv.Invalid("'power_estimation' is not supported yet")
-    return config
-
-
-CONFIG_SCHEMA = cv.All(
-    _forbid_unsupported_keys,
+CONFIG_SCHEMA = (
     light.ADDRESSABLE_LIGHT_SCHEMA.extend(
         {
             cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(LedStripLight),
+            cv.Optional(CONF_GAMMA_CORRECT): cv.invalid(
+                "'gamma_correct' has moved to 'renderer.lut.gamma_correct'"
+            ),
+            cv.Optional(light.CONF_POWER_ESTIMATION): cv.invalid(
+                "'power_estimation' is not supported yet"
+            ),
         }
     )
     .extend(LED_STRIP_RENDERER_SCHEMA)
-    .extend(cv.COMPONENT_SCHEMA),
+    .extend(cv.COMPONENT_SCHEMA)
 )
 
 

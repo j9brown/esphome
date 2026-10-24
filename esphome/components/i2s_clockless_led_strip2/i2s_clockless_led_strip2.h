@@ -1,4 +1,5 @@
 #pragma once
+#include "esphome/core/defines.h"
 
 #ifdef USE_ESP32
 #include <soc/soc_caps.h>
@@ -17,7 +18,7 @@
 
 #include <driver/i2s_types.h>
 
-namespace esphome::i2s_clockless_led_strip {
+namespace esphome::i2s_clockless_led_strip2 {
 namespace renderer {
 
 struct I2SOutputOp : public led_strip::renderer::OutputOp {
@@ -99,6 +100,6 @@ class I2SClocklessLedStrip2 final : public esphome::Component, public led_strip:
   std::atomic<bool> i2s_data_ready_{false};
 };
 
-}  // namespace esphome::i2s_clockless_led_strip
+}  // namespace esphome::i2s_clockless_led_strip2
 
 #endif
