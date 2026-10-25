@@ -170,17 +170,11 @@ def _need_continuous_renderer(config: ConfigType) -> bool:
 
 
 def _validate_renderer_options(config: ConfigType) -> ConfigType:
-    if not _need_continuous_renderer(config):
-        if config[CONF_FRAME_RATE] != "auto":
-            _LOGGER.warning(
-                "'frame_rate' will be ignored with these 'dither' and 'interpolate' options; omit it or use 'auto'"
-            )
-            config[CONF_FRAME_RATE] = "auto"
-        if config[CONF_FRAME_STATS] != "never":
-            _LOGGER.warning(
-                "'frame_stats' will be ignored with these 'dither' and 'interpolate' options; omit it or use 'never'"
-            )
-            config[CONF_FRAME_STATS] = "never"
+    if not _need_continuous_renderer(config) and config[CONF_FRAME_RATE] != "auto":
+        _LOGGER.warning(
+            "'frame_rate' will be ignored with these 'dither' and 'interpolate' options; omit it or use 'auto'"
+        )
+        config[CONF_FRAME_RATE] = "auto"
     return config
 
 

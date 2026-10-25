@@ -206,6 +206,10 @@ class Renderer {
   inline const LedStripTraits &traits() const { return this->led_strip_traits_; }
   inline size_t color_data_bytes() const { return this->color_data_bytes_; }
 
+#ifdef USE_LED_STRIP_FRAME_STATS
+  void set_frame_stats_report_interval_us(uint32_t value_us) { this->frame_stats_report_interval_us_ = value_us; }
+#endif
+
   /// Called from the main loop to dump the config.
   virtual void dump_config() = 0;
 
@@ -223,6 +227,10 @@ class Renderer {
   LedStrip *const led_strip_;
   const LedStripTraits led_strip_traits_;
   const size_t color_data_bytes_;
+
+#ifdef USE_LED_STRIP_FRAME_STATS
+  uint32_t frame_stats_report_interval_us_{};  // constant after initialization
+#endif
 };
 
 /// Renders frames on the main loop.
@@ -237,6 +245,18 @@ class ImmediateRenderer final : public Renderer {
 
  protected:
   PipelineBase<InputOpFast> *const pipeline_;
+
+#ifdef USE_LED_STRIP_FRAME_STATS
+  struct FrameStats {
+    uint32_t report_start_us{};
+    uint32_t fastest_us{UINT32_MAX};
+    uint32_t slowest_us{};
+    uint32_t last_frame_us{};
+    uint32_t frame_period_sum_us{};
+    uint16_t frame_count{};
+    uint16_t busy_count{};
+  } frame_stats_;
+#endif
 };
 
 #ifdef USE_LED_STRIP_CONTINUOUS_RENDERER
@@ -270,15 +290,18 @@ class ContinuousRenderer : public Renderer {
   SemaphoreHandle_t mutex_handle_{};
   TaskHandle_t task_handle_{};
 
-  bool done_{};           // guarded by mutex, set to true when the timer should be stopped
-  bool timer_running_{};  // guarded by mutex
-  bool render_error_{};   // guarded by mutex
+  bool done_m_{};           // guarded by mutex, set to true when the timer should be stopped
+  bool timer_running_m_{};  // guarded by mutex
+  bool render_error_m_{};   // guarded by mutex
 
 #ifdef USE_LED_STRIP_FRAME_STATS
-  bool frame_stats_report_starting_{};         // guarded by mutex
-  uint32_t frame_stats_report_interval_us_{};  // NOT guarded by mutex (constant after initialization)
-  struct FrameStats {
+  struct FrameStatsGuarded {
     uint32_t report_start_us{};
+    uint32_t last_input_us{};
+    uint32_t input_period_sum_us{};
+    uint16_t input_count{};
+  } frame_stats_m_;  // guarded by mutex
+  struct FrameStats {
     uint32_t fastest_us{UINT32_MAX};
     uint32_t slowest_us{};
     uint16_t frame_count{};
