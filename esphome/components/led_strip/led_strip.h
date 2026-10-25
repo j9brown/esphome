@@ -55,10 +55,6 @@ struct LedStripTraits {
 
   /// True if the LED strip uses the white color channel.
   bool has_w_channel;
-
-  /// The estimated time interval in microseconds between the moment when the renderer presents
-  /// a new frame and the moment when the physical pixels begin to illuminate.
-  // uint32_t latency_us;
 };
 
 enum class LedStripStatus : uint8_t {

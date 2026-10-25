@@ -19,9 +19,10 @@ constexpr size_t calc_color_data_bytes(const LedStripTraits &traits) {
   return traits.num_leds * (traits.has_w_channel ? 4 : 3);
 }
 
-Renderer::Renderer(LedStrip *led_strip)
+Renderer::Renderer(LedStrip *led_strip, RendererTraits renderer_traits)
     : led_strip_(led_strip),
       led_strip_traits_(led_strip->get_traits()),
+      renderer_traits_(renderer_traits),
       color_data_bytes_(calc_color_data_bytes(this->led_strip_traits_)) {}
 
 void Renderer::dump_config() {}
@@ -33,13 +34,14 @@ void ImmediateRenderer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Renderer: Immediate");
 }
 
-LedStripStatus ImmediateRenderer::show(const uint8_t *color_data, ColorScale color_scale, bool done) {
+LedStripStatus ImmediateRenderer::show(const RendererShow &show) {
 #ifdef USE_LED_STRIP_FRAME_STATS
   const uint32_t start_us = micros();
 #endif
 
-  const LedStripStatus status = this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_leds,
-                                                        InputOpFast{.color_data = color_data}, color_scale);
+  const LedStripStatus status =
+      this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_leds,
+                              InputOpFast{.color_data = show.color_data, .color_scale = show.color_scale});
 
 #ifdef USE_LED_STRIP_FRAME_STATS
   switch (status) {
@@ -116,13 +118,13 @@ void ContinuousRenderer::dump_config() {
   ESP_LOGCONFIG(TAG, "  Renderer: Continuous\n  Frame rate: %.1f Hz", 1000000.f / this->frame_period_us_);
 }
 
-LedStripStatus ContinuousRenderer::show(const uint8_t *color_data, ColorScale color_scale, bool done) {
+LedStripStatus ContinuousRenderer::show(const RendererShow &show) {
   xSemaphoreTake(this->mutex_handle_, portMAX_DELAY);
 
   const bool render_error = this->render_error_m_;
   bool notify = false;
   if (!render_error) {
-    this->done_m_ = done;
+    this->done_m_ = show.done;
 #ifdef USE_LED_STRIP_FRAME_STATS
     const uint32_t input_us = micros();
     this->frame_stats_m_.input_count += 1;
@@ -132,7 +134,7 @@ LedStripStatus ContinuousRenderer::show(const uint8_t *color_data, ColorScale co
     }
     this->frame_stats_m_.last_input_us = input_us;
 #endif
-    this->copy_with_mutex_(color_data, color_scale);
+    this->copy_input_m_(show);
     if (!this->timer_running_m_) {
       this->timer_running_m_ = true;
       esp_timer_start_periodic(this->timer_handle_, this->frame_period_us_);
@@ -162,8 +164,8 @@ void ContinuousRenderer::do_task_() {
     const uint32_t start_us = micros();
 #endif
 
-    LedStripStatus status = this->render_with_mutex_();
-    switch (status) {
+    RenderOutputResult result = this->render_output_m_();
+    switch (result.led_strip_status) {
       case LedStripStatus::ERROR:
         this->render_error_m_ = true;
         break;
@@ -186,7 +188,7 @@ void ContinuousRenderer::do_task_() {
 #endif
     }
 
-    if (this->timer_running_m_ && (this->render_error_m_ || this->done_m_)) {
+    if (this->timer_running_m_ && (this->render_error_m_ || (this->done_m_ && !result.transition_in_progress))) {
       esp_timer_stop(this->timer_handle_);
       this->timer_running_m_ = false;
     }
@@ -244,7 +246,7 @@ void ContinuousRenderer::on_timer_(void *arg) {
     esp_timer_isr_dispatch_need_yield();
 }
 
-bool OneBufferContinuousRenderer::setup() {
+bool FastContinuousRenderer::setup() {
   RAMAllocator<uint8_t> allocator;
   this->color_data_ = allocator.allocate(this->color_data_bytes());
   if (this->color_data_ == nullptr)
@@ -252,14 +254,63 @@ bool OneBufferContinuousRenderer::setup() {
   return ContinuousRenderer::setup();
 }
 
-void OneBufferContinuousRenderer::copy_with_mutex_(const uint8_t *color_data, ColorScale color_scale) {
-  memcpy(this->color_data_, color_data, this->color_data_bytes());
-  this->color_scale_ = color_scale;
+void FastContinuousRenderer::copy_input_m_(const RendererShow &show) {
+  memcpy(this->color_data_, show.color_data, this->color_data_bytes());
+  this->color_scale_ = show.color_scale;
 }
 
-LedStripStatus OneBufferContinuousRenderer::render_with_mutex_() {
-  return this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_leds,
-                                 InputOpFast{.color_data = this->color_data_}, this->color_scale_);
+ContinuousRenderer::RenderOutputResult FastContinuousRenderer::render_output_m_() {
+  return {.led_strip_status =
+              this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_leds,
+                                      InputOpFast{.color_data = this->color_data_, .color_scale = this->color_scale_})};
+}
+
+bool LerpContinuousRenderer::setup() {
+  const size_t bytes_per_buffer = this->color_data_bytes();
+  RAMAllocator<uint8_t> allocator;
+  this->color_data_[0] = allocator.allocate(bytes_per_buffer * 2);
+  if (this->color_data_[0] == nullptr)
+    return false;
+  this->color_data_[1] = this->color_data_[0] + bytes_per_buffer;
+  return ContinuousRenderer::setup();
+}
+
+void LerpContinuousRenderer::copy_input_m_(const RendererShow &show) {
+  this->front_buffer_ ^= 1;
+  const unsigned front_buffer = this->front_buffer_;
+  memcpy(this->color_data_[front_buffer], show.color_data, this->color_data_bytes());
+  this->color_scales_[front_buffer] = show.color_scale;
+  if (show.transition_us != 0 && this->timer_running_m_) {
+    this->transition_end_us_ = micros() + show.transition_us;
+    this->transition_duration_us_ = show.transition_us;
+  } else {
+    // The timer will be started after returning from this method so if it's not running yet then that means the
+    // light just turned on and only the front buffer will be valid so no transition is possible.
+    this->transition_duration_us_ = 0;
+  }
+}
+
+ContinuousRenderer::RenderOutputResult LerpContinuousRenderer::render_output_m_() {
+  const unsigned front_buffer = this->front_buffer_;
+  const unsigned back_buffer = front_buffer ^ 1;
+  uq24_8_t alpha = 0;
+  bool transition_in_progress = false;
+  if (this->transition_duration_us_ != 0) {
+    const uint32_t now_us = micros();
+    if (now_us >= this->transition_end_us_) {
+      this->transition_duration_us_ = 0;
+    } else {
+      alpha = (uint64_t(this->transition_end_us_ - now_us) << 8) / this->transition_duration_us_;
+      transition_in_progress = true;
+    }
+  }
+  return {.led_strip_status = this->pipeline_->render(this->led_strip_, this->led_strip_traits_.num_leds,
+                                                      InputOpLerp{.color_data_a = this->color_data_[front_buffer],
+                                                                  .color_data_b = this->color_data_[back_buffer],
+                                                                  .color_scale_a = this->color_scales_[front_buffer],
+                                                                  .color_scale_b = this->color_scales_[back_buffer],
+                                                                  .alpha = alpha}),
+          .transition_in_progress = transition_in_progress};
 }
 
 #endif  // USE_LED_STRIP_CONTINUOUS_RENDERER
