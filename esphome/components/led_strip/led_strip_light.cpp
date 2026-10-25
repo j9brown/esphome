@@ -91,6 +91,13 @@ void LedStripLight::write_state(light::LightState *state) {
   if (this->is_failed())
     return;
 
+  // static uint32_t last_refresh;
+  // uint32_t now = micros();
+  // if (this->throttle_show_(now, last_refresh, 500000))
+  //   return;
+  // last_refresh = now;
+  uint32_t transition_us = 16000;
+
   const auto &val = state->current_values;
   const float w_brightness = val.get_brightness() * val.get_state();
   const float rgb_brightess = val.get_color_brightness() * w_brightness;
@@ -102,7 +109,9 @@ void LedStripLight::write_state(light::LightState *state) {
   };
   const bool done = !val.is_on();
 
-  LedStripStatus status = this->renderer_->show(this->color_data_, color_scale, done);
+  renderer::RendererShow show{
+      .color_data = this->color_data_, .color_scale = color_scale, .transition_us = transition_us, .done = done};
+  LedStripStatus status = this->renderer_->show(show);
   switch (status) {
     case LedStripStatus::READY:
       this->mark_shown_();

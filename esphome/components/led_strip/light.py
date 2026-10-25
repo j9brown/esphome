@@ -6,7 +6,7 @@ from esphome.types import ConfigType
 
 from . import (
     CONF_LED_STRIP_ID,
-    LED_STRIP_RENDERER_SCHEMA,
+    LED_STRIP_CLIENT_SCHEMA,
     get_led_strip_traits,
     led_strip_ns,
     new_led_strip_renderer,
@@ -28,7 +28,7 @@ CONFIG_SCHEMA = (
             ),
         }
     )
-    .extend(LED_STRIP_RENDERER_SCHEMA)
+    .extend(LED_STRIP_CLIENT_SCHEMA)
     .extend(cv.COMPONENT_SCHEMA)
 )
 

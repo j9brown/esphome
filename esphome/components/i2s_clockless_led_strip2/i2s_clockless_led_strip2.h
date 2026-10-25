@@ -22,7 +22,7 @@ namespace esphome::i2s_clockless_led_strip2 {
 namespace renderer {
 
 struct I2SOutputOp : public led_strip::renderer::OutputOp {
-  inline void write_next_channel(uint8_t value) {
+  inline ESPHOME_ALWAYS_INLINE void write_next_channel(uint8_t value) {
     *(i2s_data++) = 0b10010010 | ((value & 0x80) >> 1) | ((value & 0x40) >> 3) | ((value & 0x20) >> 5);
     *(i2s_data++) = 0b01001001 | ((value & 0x10) << 1) | ((value & 0x08) >> 1);
     *(i2s_data++) = 0b00100100 | ((value & 0x04) << 5) | ((value & 0x02) << 3) | ((value & 0x01) << 1);
@@ -39,7 +39,7 @@ enum class Channel {
 };
 
 template<Channel c0, Channel c1, Channel c2> struct I2SOutputOpRGB : public I2SOutputOp {
-  inline void write_next_pixel(uint8_t r, uint8_t g, uint8_t b) {
+  inline ESPHOME_ALWAYS_INLINE void write_next_pixel(uint8_t r, uint8_t g, uint8_t b) {
     auto rgb = std::make_tuple(r, g, b);
     this->write_next_channel(std::get<unsigned(c0)>(rgb));
     this->write_next_channel(std::get<unsigned(c1)>(rgb));
@@ -48,7 +48,7 @@ template<Channel c0, Channel c1, Channel c2> struct I2SOutputOpRGB : public I2SO
 };
 
 template<Channel c0, Channel c1, Channel c2, Channel c3> struct I2SOutputOpRGBW : public I2SOutputOp {
-  inline void write_next_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
+  inline ESPHOME_ALWAYS_INLINE void write_next_pixel(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
     auto rgbw = std::make_tuple(r, g, b, w);
     this->write_next_channel(std::get<unsigned(c0)>(rgbw));
     this->write_next_channel(std::get<unsigned(c1)>(rgbw));

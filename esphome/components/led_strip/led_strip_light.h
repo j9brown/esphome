@@ -37,8 +37,8 @@ class LedStripLight final : public light::AddressableLight {
   void write_state(light::LightState *state) override;
 
  protected:
-  inline bool has_w_channel_() const { return this->renderer_->traits().has_w_channel; }
-  inline size_t num_leds_() const { return this->renderer_->traits().num_leds; }
+  inline bool has_w_channel_() const { return this->renderer_->led_strip_traits().has_w_channel; }
+  inline size_t num_leds_() const { return this->renderer_->led_strip_traits().num_leds; }
   inline size_t color_data_bytes_() const { return this->renderer_->color_data_bytes(); }
   inline size_t effect_data_bytes_() const { return this->num_leds_(); }
   inline uint8_t *effect_data_() const { return this->color_data_ + this->color_data_bytes_(); }
