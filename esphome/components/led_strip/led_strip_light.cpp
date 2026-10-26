@@ -4,6 +4,7 @@
 
 #include "esphome/components/light/esp_color_view.h"
 #include "esphome/components/light/transformers.h"
+#include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
@@ -34,13 +35,13 @@ void LedStripLight::setup() {
     return;
   }
   this->accessor_ =
-      new light::RawBufferColorAccessor(this->color_data_, this->effect_data_(),
-                                        light::ChannelColors{
-                                            .r = 0,
-                                            .g = 1,
-                                            .b = 2,
-                                            .w = this->has_w_channel_() ? uint8_t(3) : light::ChannelColors::NO_WHITE,
-                                        });
+      this->internal_accessor_.init(this->color_data_, this->effect_data_(),
+                                    light::ChannelColors{
+                                        .r = 0,
+                                        .g = 1,
+                                        .b = 2,
+                                        .w = this->has_w_channel_() ? uint8_t(3) : light::ChannelColors::NO_WHITE,
+                                    });
 }
 
 bool LedStripLight::allocate_buffers_() {
@@ -65,20 +66,21 @@ light::LightTraits LedStripLight::get_traits() {
 }
 
 std::unique_ptr<light::LightTransformer> LedStripLight::create_default_transition() {
-  // Override the AddressableLight's implementation to only animate the light values and apply them
-  // in update_state.  The AddressableLightTransformer pre-scales the color values in the frame
-  // buffer which doesn't work.
-  return make_unique<light::LightTransitionTransformer>();
+  // Override the AddressableLight's implementation to preserve full-scale values in the frame buffer.
+  return make_unique<LedStripLightTransformer>(*this);
+}
+
+Color light_values_to_color(const light::LightColorValues &values) {
+  return Color(light::to_uint8_scale(values.get_red()), light::to_uint8_scale(values.get_green()),
+               light::to_uint8_scale(values.get_blue()), light::to_uint8_scale(values.get_white()));
 }
 
 void LedStripLight::update_state(light::LightState *state) {
   // Override the AddressableLight's implementation to preserve full-scale values in the frame buffer
   // because scaling will be applied by the renderer instead.  Also keeps the base class's color
   // correction at its default (identity transformation) value.
-  if (!this->is_effect_active()) {
-    const auto &val = state->current_values;
-    this->all() = Color(light::to_uint8_scale(val.get_red()), light::to_uint8_scale(val.get_green()),
-                        light::to_uint8_scale(val.get_blue()), light::to_uint8_scale(val.get_white()));
+  if (!this->is_effect_active() && !state->is_transitioning()) {
+    this->all() = light_values_to_color(state->current_values);
     this->schedule_show();
   }
 }
@@ -91,13 +93,6 @@ void LedStripLight::write_state(light::LightState *state) {
   if (this->is_failed())
     return;
 
-  // static uint32_t last_refresh;
-  // uint32_t now = micros();
-  // if (this->throttle_show_(now, last_refresh, 500000))
-  //   return;
-  // last_refresh = now;
-  uint32_t transition_us = 16000;
-
   const auto &val = state->current_values;
   const float w_brightness = val.get_brightness() * val.get_state();
   const float rgb_brightess = val.get_color_brightness() * w_brightness;
@@ -108,6 +103,7 @@ void LedStripLight::write_state(light::LightState *state) {
       .w = to_renderer_scale(this->color_scale_.w * w_brightness),
   };
   const bool done = !val.is_on();
+  const uint32_t transition_us = App.get_loop_interval();
 
   renderer::RendererShow show{
       .color_data = this->color_data_, .color_scale = color_scale, .transition_us = transition_us, .done = done};
@@ -127,5 +123,37 @@ void LedStripLight::write_state(light::LightState *state) {
 }
 
 void LedStripLight::clear_effect_data() { memset(this->effect_data_(), 0, this->effect_data_bytes_()); }
+
+void LedStripLightTransformer::start() {
+  // Only transition the overall color if no effect is running and the strip will remain on
+  const auto &val = this->target_values_;
+  if (!this->light_.is_effect_active() && val.get_brightness() * val.get_state() > 0.f) {
+    this->target_color_ = light_values_to_color(this->target_values_);
+  }
+}
+
+inline constexpr uint8_t subtract_scaled_difference(uint8_t a, uint8_t b, int32_t scale) {
+  return uint8_t(int32_t(a) - (((int32_t(a) - int32_t(b)) * scale) / 256));
+}
+
+std::optional<light::LightColorValues> LedStripLightTransformer::apply() {
+  const float smoothed_progress = light::LightTransformer::smoothed_progress(this->get_progress_());
+  if (this->target_color_.has_value()) {
+    // Progressively interpolate the color of each pixel towards the target color.
+    const Color target_color = this->target_color_.value();
+    const int32_t scale =
+        int32_t(256.f * std::max((1.f - smoothed_progress) / (1.f - this->last_transition_progress_), 0.f));
+    for (auto led : this->light_) {
+      const Color color = led.get();
+      led.set(Color{subtract_scaled_difference(target_color.red, color.red, scale),
+                    subtract_scaled_difference(target_color.green, color.green, scale),
+                    subtract_scaled_difference(target_color.blue, color.blue, scale),
+                    subtract_scaled_difference(target_color.white, color.white, scale)});
+    }
+    this->last_transition_progress_ = smoothed_progress;
+    this->light_.schedule_show();
+  }
+  return light::LightColorValues::lerp(this->get_start_values(), this->get_target_values(), smoothed_progress);
+}
 
 }  // namespace esphome::led_strip
