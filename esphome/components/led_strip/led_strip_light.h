@@ -48,7 +48,21 @@ class LedStripLight final : public light::AddressableLight {
   renderer::Renderer *const renderer_;
   const ColorScaleFloat color_scale_;
 
+  Inplace<light::RawBufferColorAccessor> internal_accessor_;
   uint8_t *color_data_{nullptr};
+};
+
+class LedStripLightTransformer : public light::LightTransformer {
+ public:
+  LedStripLightTransformer(LedStripLight &light) : light_(light) {}
+
+  void start() override;
+  std::optional<light::LightColorValues> apply() override;
+
+ protected:
+  LedStripLight &light_;
+  float last_transition_progress_{0.0f};
+  std::optional<Color> target_color_{};
 };
 
 }  // namespace esphome::led_strip
