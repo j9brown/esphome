@@ -34,14 +34,9 @@ void LedStripLight::setup() {
     this->mark_failed(LOG_STR(ERROR_ALLOCATION));
     return;
   }
-  this->accessor_ =
-      this->internal_accessor_.init(this->color_data_, this->effect_data_(),
-                                    light::ChannelColors{
-                                        .r = 0,
-                                        .g = 1,
-                                        .b = 2,
-                                        .w = this->has_w_channel_() ? uint8_t(3) : light::ChannelColors::NO_WHITE,
-                                    });
+  this->accessor_ = this->internal_accessor_.init(
+      this->color_data_, this->effect_data_(),
+      light::ChannelColors{0, 1, 2, this->has_w_channel_() ? uint8_t(3) : light::ChannelColors::NO_WHITE});
 }
 
 bool LedStripLight::allocate_buffers_() {
