@@ -284,8 +284,9 @@ class ImmediateRenderer final : public Renderer {
 #ifdef USE_LED_STRIP_FRAME_STATS
   struct FrameStats {
     uint32_t report_start_us{};
-    uint32_t fastest_us{UINT32_MAX};
     uint32_t slowest_us{};
+    uint32_t fastest_us{UINT32_MAX};
+    uint32_t total_us{};
     uint32_t last_frame_us{};
     uint32_t frame_period_sum_us{};
     uint16_t frame_count{};
@@ -342,8 +343,9 @@ class ContinuousRenderer : public Renderer {
     uint16_t input_count{};
   } frame_stats_m_;  // guarded by mutex
   struct FrameStats {
-    uint32_t fastest_us{UINT32_MAX};
     uint32_t slowest_us{};
+    uint32_t fastest_us{UINT32_MAX};
+    uint32_t total_us{};
     uint16_t frame_count{};
     uint16_t busy_count{};
     uint16_t lost_count{};

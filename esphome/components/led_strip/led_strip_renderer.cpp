@@ -47,10 +47,11 @@ LedStripStatus ImmediateRenderer::show(const RendererShow &show) {
   switch (status) {
     case LedStripStatus::READY: {
       const uint32_t frame_duration_us = micros() - start_us;
-      if (frame_duration_us < this->frame_stats_.fastest_us)
-        this->frame_stats_.fastest_us = frame_duration_us;
       if (frame_duration_us > this->frame_stats_.slowest_us)
         this->frame_stats_.slowest_us = frame_duration_us;
+      if (frame_duration_us < this->frame_stats_.fastest_us)
+        this->frame_stats_.fastest_us = frame_duration_us;
+      this->frame_stats_.total_us += frame_duration_us;
       this->frame_stats_.frame_count += 1;
       if (this->frame_stats_.frame_count > 1) {
         const uint32_t frame_period_us = start_us - this->frame_stats_.last_frame_us;
@@ -73,12 +74,13 @@ LedStripStatus ImmediateRenderer::show(const RendererShow &show) {
           (report_duration_us != 0 ? float(this->frame_stats_.frame_count * 1000000) / report_duration_us : 0);
       ESP_LOGI(TAG,
                "Frame stats: %.1f fps, %" PRIu16 " frames in %" PRIu32 " us with average period of %" PRIu32
-               " us, slowest %" PRIu32 " us, fastest %" PRIu32 " us, %" PRIu16 " busy",
+               " us, slowest %" PRIu32 " us, fastest %" PRIu32 " us, total %" PRIu32 " us, %" PRIu16 " busy",
                fps, this->frame_stats_.frame_count, report_duration_us,
                this->frame_stats_.frame_count > 1
                    ? this->frame_stats_.frame_period_sum_us / (this->frame_stats_.frame_count - 1)
                    : 0,
-               this->frame_stats_.slowest_us, this->frame_stats_.fastest_us, this->frame_stats_.busy_count);
+               this->frame_stats_.slowest_us, this->frame_stats_.frame_count > 0 ? this->frame_stats_.fastest_us : 0,
+               this->frame_stats_.total_us, this->frame_stats_.busy_count);
       this->frame_stats_ = {};
     });
   }
@@ -172,10 +174,11 @@ void ContinuousRenderer::do_task_() {
 #ifdef USE_LED_STRIP_FRAME_STATS
       case LedStripStatus::READY: {
         const uint32_t frame_duration_us = micros() - start_us;
-        if (frame_duration_us < this->frame_stats_.fastest_us)
-          this->frame_stats_.fastest_us = frame_duration_us;
         if (frame_duration_us > this->frame_stats_.slowest_us)
           this->frame_stats_.slowest_us = frame_duration_us;
+        if (frame_duration_us < this->frame_stats_.fastest_us)
+          this->frame_stats_.fastest_us = frame_duration_us;
+        this->frame_stats_.total_us += frame_duration_us;
         this->frame_stats_.frame_count += 1;
         break;
       }
@@ -225,10 +228,12 @@ void ContinuousRenderer::do_task_() {
             (report_duration_us != 0 ? float(this->frame_stats_.frame_count * 1000000) / report_duration_us : 0);
         ESP_LOGI(TAG,
                  "Frame stats: %.1f fps, %" PRIu16 " frames in %" PRIu32 " us, slowest %" PRIu32 " us, fastest %" PRIu32
-                 " us, %" PRIu16 " busy, %" PRIu16 " lost; %" PRIu16 " inputs with average period of %" PRIu32 " us",
+                 " us, total %" PRIu32 " us, %" PRIu16 " busy, %" PRIu16 " lost; %" PRIu16
+                 " inputs with average period of %" PRIu32 " us",
                  fps, this->frame_stats_.frame_count, report_duration_us, this->frame_stats_.slowest_us,
-                 this->frame_stats_.fastest_us, this->frame_stats_.busy_count, this->frame_stats_.lost_count,
-                 input_count, input_count > 1 ? input_period_sum_us / (input_count - 1) : 0);
+                 this->frame_stats_.frame_count > 0 ? this->frame_stats_.fastest_us : 0, this->frame_stats_.total_us,
+                 this->frame_stats_.busy_count, this->frame_stats_.lost_count, input_count,
+                 input_count > 1 ? input_period_sum_us / (input_count - 1) : 0);
         this->frame_stats_ = {};
         continue;  // already gave the semaphore away
       }

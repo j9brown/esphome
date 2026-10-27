@@ -84,6 +84,18 @@ inline renderer::uq24_8_t to_renderer_scale(float scale) {
   return std::clamp<renderer::uq24_8_t>(scale * 0x100, 0, 0x100);
 }
 
+inline bool is_channel_all_zero(renderer::uq24_8_t scale, const uint8_t *start, const uint8_t *end,
+                                size_t bytes_per_led) {
+  if (scale != 0) {
+    while (start < end) {
+      if (*start != 0)
+        return false;
+      start += bytes_per_led;
+    }
+  }
+  return true;
+}
+
 void LedStripLight::write_state(light::LightState *state) {
   if (this->is_failed())
     return;
@@ -97,7 +109,27 @@ void LedStripLight::write_state(light::LightState *state) {
       .b = to_renderer_scale(this->color_scale_.b * rgb_brightess),
       .w = to_renderer_scale(this->color_scale_.w * w_brightness),
   };
-  const bool done = !val.is_on();
+  bool done = !val.is_on();
+  if (done) {
+    this->active_ = false;
+  } else {
+    const uint8_t *start = this->color_data_;
+    const uint8_t *end = start + this->color_data_bytes_();
+    const bool has_w_channel = this->has_w_channel_();
+    const size_t bytes_per_led = has_w_channel ? 4 : 3;
+    const bool all_zero = is_channel_all_zero(color_scale.r, start, end, bytes_per_led) &&
+                          is_channel_all_zero(color_scale.g, start + 1, end, bytes_per_led) &&
+                          is_channel_all_zero(color_scale.b, start + 2, end, bytes_per_led) &&
+                          (!has_w_channel || is_channel_all_zero(color_scale.w, start + 3, end, bytes_per_led));
+    if (!all_zero) {
+      this->active_ = true;
+    } else if (!this->active_) {
+      return;  // already inactive and all zero so nothing to render
+    } else if (!state->is_transitioning()) {
+      this->active_ = false;
+    }
+    done = !this->active_;
+  }
   const uint32_t transition_us = App.get_loop_interval();
 
   renderer::RendererShow show{
@@ -105,7 +137,12 @@ void LedStripLight::write_state(light::LightState *state) {
   LedStripStatus status = this->renderer_->show(show);
   switch (status) {
     case LedStripStatus::READY:
-      this->mark_shown_();
+#ifdef USE_POWER_SUPPLY
+      if (done)
+        this->power_.unrequest();
+      else
+        this->power_.request();
+#endif
       break;
     case LedStripStatus::BUSY:
       this->schedule_show();
@@ -113,6 +150,9 @@ void LedStripLight::write_state(light::LightState *state) {
     default:
     case LedStripStatus::ERROR:
       this->mark_failed(LOG_STR(ERROR_RENDERER));
+#ifdef USE_POWER_SUPPLY
+      this->power_.unrequest();
+#endif
       break;
   }
 }
