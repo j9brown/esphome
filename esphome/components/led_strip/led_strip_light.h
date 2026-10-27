@@ -50,6 +50,7 @@ class LedStripLight final : public light::AddressableLight {
 
   Inplace<light::RawBufferColorAccessor> internal_accessor_;
   uint8_t *color_data_{nullptr};
+  bool active_{};
 };
 
 class LedStripLightTransformer : public light::LightTransformer {
