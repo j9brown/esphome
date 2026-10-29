@@ -34,17 +34,16 @@ void LedStripLight::setup() {
     this->mark_failed(LOG_STR(ERROR_ALLOCATION));
     return;
   }
-  this->accessor_ = this->internal_accessor_.init(
-      this->color_data_, this->effect_data_(),
-      light::ChannelColors{0, 1, 2, this->has_w_channel_() ? uint8_t(3) : light::ChannelColors::NO_WHITE});
+  this->accessor_ = &this->internal_accessor_;
 }
 
 bool LedStripLight::allocate_buffers_() {
   RAMAllocator<uint8_t> allocator;
   const size_t total_size = this->color_data_bytes_() + this->effect_data_bytes_();
-  this->color_data_ = allocator.allocate(total_size);
-  if (this->color_data_ != nullptr) {
-    memset(this->color_data_, 0, total_size);
+  this->internal_accessor_.color_data = allocator.allocate(total_size);
+  if (this->internal_accessor_.color_data != nullptr) {
+    this->internal_accessor_.effect_data = this->internal_accessor_.color_data + this->color_data_bytes_();
+    memset(this->internal_accessor_.color_data, 0, total_size);
     return true;
   }
   return false;
@@ -113,7 +112,7 @@ void LedStripLight::write_state(light::LightState *state) {
   if (done) {
     this->active_ = false;
   } else {
-    const uint8_t *start = this->color_data_;
+    const uint8_t *start = this->internal_accessor_.color_data;
     const uint8_t *end = start + this->color_data_bytes_();
     const bool has_w_channel = this->has_w_channel_();
     const size_t bytes_per_led = has_w_channel ? 4 : 3;
@@ -132,8 +131,10 @@ void LedStripLight::write_state(light::LightState *state) {
   }
   const uint32_t transition_us = App.get_loop_interval();
 
-  renderer::RendererShow show{
-      .color_data = this->color_data_, .color_scale = color_scale, .transition_us = transition_us, .done = done};
+  renderer::RendererShow show{.color_data = this->internal_accessor_.color_data,
+                              .color_scale = color_scale,
+                              .transition_us = transition_us,
+                              .done = done};
   LedStripStatus status = this->renderer_->show(show);
   switch (status) {
     case LedStripStatus::READY:
@@ -157,7 +158,7 @@ void LedStripLight::write_state(light::LightState *state) {
   }
 }
 
-void LedStripLight::clear_effect_data() { memset(this->effect_data_(), 0, this->effect_data_bytes_()); }
+void LedStripLight::clear_effect_data() { memset(this->internal_accessor_.effect_data, 0, this->effect_data_bytes_()); }
 
 void LedStripLightTransformer::start() {
   // Only transition the overall color if no effect is running and the strip will remain on

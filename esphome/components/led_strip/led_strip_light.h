@@ -21,7 +21,10 @@ struct ColorScaleFloat {
 class LedStripLight final : public light::AddressableLight {
  public:
   LedStripLight(renderer::Renderer *renderer, ColorScaleFloat color_scale)
-      : renderer_(renderer), color_scale_(color_scale) {}
+      : renderer_(renderer),
+        color_scale_(color_scale),
+        internal_accessor_(nullptr, nullptr,
+                           {0, 1, 2, this->has_w_channel_() ? uint8_t(3) : light::ChannelColors::NO_WHITE}) {}
 
   void dump_config() override;
   float get_setup_priority() const override;
@@ -41,15 +44,13 @@ class LedStripLight final : public light::AddressableLight {
   inline size_t num_leds_() const { return this->renderer_->led_strip_traits().num_leds; }
   inline size_t color_data_bytes_() const { return this->renderer_->color_data_bytes(); }
   inline size_t effect_data_bytes_() const { return this->num_leds_(); }
-  inline uint8_t *effect_data_() const { return this->color_data_ + this->color_data_bytes_(); }
 
   bool allocate_buffers_();
 
   renderer::Renderer *const renderer_;
   const ColorScaleFloat color_scale_;
 
-  Inplace<light::RawBufferColorAccessor> internal_accessor_;
-  uint8_t *color_data_{nullptr};
+  light::RawBufferColorAccessor internal_accessor_;
   bool active_{};
 };
 
