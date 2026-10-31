@@ -161,7 +161,7 @@ def _validate_lut_options(lut_config: ConfigType) -> ConfigType:
             )
         lut_config[CONF_METHOD] = cv.enum(LUT_METHODS)("none")
     elif CONF_METHOD not in lut_config:
-        lut_config[CONF_METHOD] = cv.enum(LUT_METHODS)("fast")
+        lut_config[CONF_METHOD] = cv.enum(LUT_METHODS)("lerp")
     return lut_config
 
 

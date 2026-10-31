@@ -30,23 +30,12 @@ void LedStripLight::setup() {
     this->mark_failed(LOG_STR(ERROR_RENDERER));
     return;
   }
-  if (!this->allocate_buffers_()) {
+  RAMAllocator<uint8_t> allocator;
+  if (!this->internal_accessor_.allocate(allocator, this->num_leds_())) {
     this->mark_failed(LOG_STR(ERROR_ALLOCATION));
     return;
   }
   this->accessor_ = &this->internal_accessor_;
-}
-
-bool LedStripLight::allocate_buffers_() {
-  RAMAllocator<uint8_t> allocator;
-  const size_t total_size = this->color_data_bytes_() + this->effect_data_bytes_();
-  this->internal_accessor_.color_data = allocator.allocate(total_size);
-  if (this->internal_accessor_.color_data != nullptr) {
-    this->internal_accessor_.effect_data = this->internal_accessor_.color_data + this->color_data_bytes_();
-    memset(this->internal_accessor_.color_data, 0, total_size);
-    return true;
-  }
-  return false;
 }
 
 light::LightTraits LedStripLight::get_traits() {
@@ -158,7 +147,7 @@ void LedStripLight::write_state(light::LightState *state) {
   }
 }
 
-void LedStripLight::clear_effect_data() { memset(this->internal_accessor_.effect_data, 0, this->effect_data_bytes_()); }
+void LedStripLight::clear_effect_data() { this->internal_accessor_.clear_effect_data(this->num_leds_()); }
 
 void LedStripLightTransformer::start() {
   // Only transition the overall color if no effect is running and the strip will remain on

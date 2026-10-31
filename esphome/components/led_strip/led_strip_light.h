@@ -43,9 +43,6 @@ class LedStripLight final : public light::AddressableLight {
   inline bool has_w_channel_() const { return this->renderer_->led_strip_traits().has_w_channel; }
   inline size_t num_leds_() const { return this->renderer_->led_strip_traits().num_leds; }
   inline size_t color_data_bytes_() const { return this->renderer_->color_data_bytes(); }
-  inline size_t effect_data_bytes_() const { return this->num_leds_(); }
-
-  bool allocate_buffers_();
 
   renderer::Renderer *const renderer_;
   const ColorScaleFloat color_scale_;
